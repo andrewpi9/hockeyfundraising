@@ -4,9 +4,12 @@ import { notFound } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
 import { Thermometer } from "@/components/Thermometer";
 import { FeeDisclosure } from "@/components/FeeDisclosure";
+import { DonateForm } from "@/components/DonateForm";
+import { DonorWall } from "@/components/DonorWall";
 import { Avatar, card } from "@/components/ui";
 import { getOrg, getPublicCampaignBySlug } from "@/lib/queries/campaigns";
 import { getParticipantPublic } from "@/lib/queries/participants";
+import { listPublicDonations } from "@/lib/queries/donations";
 
 export const dynamic = "force-dynamic";
 
@@ -35,11 +38,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function ParticipantPage({ params }: Props) {
+export default async function ParticipantPage({ params, searchParams }: Props) {
   const { slug, participant: participantSlug } = await params;
+  const { ref } = await searchParams;
   const data = await load(slug, participantSlug);
   if (!data) notFound();
   const { org, campaign, participant, raisedCents, donorCount } = data;
+  const wall = await listPublicDonations(campaign.id, { participantId: participant.id, limit: 15 });
 
   return (
     <>
@@ -78,8 +83,23 @@ export default async function ParticipantPage({ params }: Props) {
                 </div>
               </section>
             ) : null}
+            <section>
+              <h2 className="mb-3 text-lg font-bold">Supporters</h2>
+              <DonorWall donations={wall} />
+            </section>
           </div>
-          <aside className="space-y-4 lg:sticky lg:top-20">
+          <aside id="donate" className="scroll-mt-20 space-y-4 lg:sticky lg:top-20">
+            {campaign.status === "active" ? (
+              <DonateForm
+                campaignSlug={campaign.slug}
+                participantSlug={participant.slug}
+                participantName={participant.displayName}
+                refCode={ref}
+                allowFeeCover={campaign.allowFeeCover}
+                platformFeeBps={campaign.platformFeeBps}
+                turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || undefined}
+              />
+            ) : null}
             <FeeDisclosure platformFeeBps={campaign.platformFeeBps} allowFeeCover={campaign.allowFeeCover} />
           </aside>
         </div>

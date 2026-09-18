@@ -4,9 +4,12 @@ import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
 import { Thermometer } from "@/components/Thermometer";
 import { Leaderboard } from "@/components/Leaderboard";
 import { FeeDisclosure } from "@/components/FeeDisclosure";
+import { DonateForm } from "@/components/DonateForm";
+import { DonorWall } from "@/components/DonorWall";
 import { card } from "@/components/ui";
 import { getOrg, getPublicCampaignBySlug } from "@/lib/queries/campaigns";
 import { listParticipantsWithTotals } from "@/lib/queries/participants";
+import { listPublicDonations } from "@/lib/queries/donations";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +33,7 @@ export default async function CampaignPage({ params }: Props) {
   const campaign = await getPublicCampaignBySlug(org.id, slug);
   if (!campaign) notFound();
 
-  const leaderboard = await listParticipantsWithTotals(campaign.id);
+  const [leaderboard, wall] = await Promise.all([listParticipantsWithTotals(campaign.id), listPublicDonations(campaign.id, { limit: 15 })]);
   // Server component on a force-dynamic route: evaluated once per request, so
   // there is no re-render for the clock to drift across.
   // eslint-disable-next-line react-hooks/purity
@@ -71,12 +74,24 @@ export default async function CampaignPage({ params }: Props) {
                 </div>
               </section>
             ) : null}
-            <section>
+            <section id="participants" className="scroll-mt-20">
               <h2 className="mb-3 text-lg font-bold">Participants</h2>
               <Leaderboard rows={leaderboard} />
             </section>
+            <section>
+              <h2 className="mb-3 text-lg font-bold">Recent supporters</h2>
+              <DonorWall donations={wall} showParticipant />
+            </section>
           </div>
-          <aside className="space-y-4 lg:sticky lg:top-20">
+          <aside id="donate" className="scroll-mt-20 space-y-4 lg:sticky lg:top-20">
+            {campaign.status === "active" ? (
+              <DonateForm
+                campaignSlug={campaign.slug}
+                allowFeeCover={campaign.allowFeeCover}
+                platformFeeBps={campaign.platformFeeBps}
+                turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || undefined}
+              />
+            ) : null}
             <FeeDisclosure platformFeeBps={campaign.platformFeeBps} allowFeeCover={campaign.allowFeeCover} />
           </aside>
         </div>

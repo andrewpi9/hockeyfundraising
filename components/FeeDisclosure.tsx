@@ -1,4 +1,4 @@
-import { STRIPE_PERCENT, STRIPE_FIXED_CENTS, formatMoney } from "@/lib/money";
+import { stripeFeeRate, formatMoney } from "@/lib/money";
 import { card } from "./ui";
 
 /**
@@ -7,6 +7,7 @@ import { card } from "./ui";
  */
 export function FeeDisclosure({ platformFeeBps, allowFeeCover }: { platformFeeBps: number; allowFeeCover: boolean }) {
   const platformPct = (platformFeeBps / 100).toFixed(platformFeeBps % 100 === 0 ? 0 : 2);
+  const { percent, fixedCents } = stripeFeeRate();
   return (
     <div className={`${card} p-4 text-sm`}>
       <h3 className="font-semibold">Where your money goes</h3>
@@ -15,7 +16,7 @@ export function FeeDisclosure({ platformFeeBps, allowFeeCover }: { platformFeeBp
         <dd className="text-right font-semibold tabular-nums">{platformPct}%</dd>
         <dt className="text-muted">Card processing (Stripe)</dt>
         <dd className="text-right tabular-nums">
-          {(STRIPE_PERCENT * 100).toFixed(1)}% + {formatMoney(STRIPE_FIXED_CENTS)}
+          {(percent * 100).toFixed(1)}% + {formatMoney(fixedCents)}
         </dd>
         <dt className="text-muted">Suggested tip</dt>
         <dd className="text-right tabular-nums">none</dd>

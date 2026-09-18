@@ -6,6 +6,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type Stripe from "stripe";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { eq } from "drizzle-orm";
@@ -411,6 +412,132 @@ async function main() {
   check("C (no email) not eligible", loaded.find((r) => r.name === "C")!.eligibleForEmail, false);
   check("D cooldown: 1 day since invite", loaded.find((r) => r.name === "D")!.daysSinceInvite, 1);
   check("D eligible again after 7 days", (await cq.loadContactRows(p3.id, new Date(Date.now() + 8 * 86_400_000))).find((r) => r.name === "D")!.eligibleForEmail, true);
+
+  // ------------------------------------------------------------ phase 4: donations
+  console.log("\nFee math from configuration");
+  const money = await import("../lib/money");
+  delete process.env.NEXT_PUBLIC_STRIPE_FEE_PERCENT;
+  delete process.env.NEXT_PUBLIC_STRIPE_FEE_FIXED_CENTS;
+  check("default is the standard rate (never under-collect)", money.stripeFeeRate(), { percent: 0.029, fixedCents: 30 });
+  check("standard: $100 grosses to $103.30", money.grossUpForFees(10000), 10330);
+  process.env.NEXT_PUBLIC_STRIPE_FEE_PERCENT = "2.2";
+  check("nonprofit rate via env", money.stripeFeeRate().percent, 0.022);
+  check("nonprofit: $100 grosses to $102.56", money.grossUpForFees(10000), 10256);
+  for (const amount of [500, 2500, 10000, 99999, 250000]) {
+    for (const rate of ["2.2", "2.9", "3.5"]) {
+      process.env.NEXT_PUBLIC_STRIPE_FEE_PERCENT = rate;
+      const g = money.grossUpForFees(amount);
+      check(`no shortfall: ${amount}c at ${rate}%`, g - money.estimatedStripeFee(g) >= amount, true);
+    }
+  }
+  process.env.NEXT_PUBLIC_STRIPE_FEE_PERCENT = "junk";
+  check("garbage rate falls back to standard", money.stripeFeeRate().percent, 0.029);
+  process.env.NEXT_PUBLIC_STRIPE_FEE_PERCENT = "2.2";
+  check("platform fee 0 bps is 0", money.platformFeeFor(10000, 0), 0);
+  check("platform fee 250 bps of $100 is $2.50", money.platformFeeFor(10000, 250), 250);
+
+  console.log("\nCheckout input validation");
+  const { CheckoutInput } = await import("../lib/checkout-schema");
+  const good = { campaignSlug: "spring-fund", amountCents: 5000, coverFee: true, donorEmail: "d@x.com" };
+  check("valid body accepted", CheckoutInput.safeParse(good).success, true);
+  check("below minimum rejected", CheckoutInput.safeParse({ ...good, amountCents: 499 }).success, false);
+  check("above maximum rejected", CheckoutInput.safeParse({ ...good, amountCents: 2_500_001 }).success, false);
+  check("fractional cents rejected", CheckoutInput.safeParse({ ...good, amountCents: 50.5 }).success, false);
+  check("bad email rejected", CheckoutInput.safeParse({ ...good, donorEmail: "nope" }).success, false);
+  check("bad ref shape rejected", CheckoutInput.safeParse({ ...good, ref: "../../etc" }).success, false);
+  check("501-char note rejected", CheckoutInput.safeParse({ ...good, message: "x".repeat(501) }).success, false);
+  check("coverFee defaults true", CheckoutInput.parse({ campaignSlug: "s", amountCents: 500, donorEmail: "d@x.com" }).coverFee, true);
+
+  console.log("\nStripe event processing");
+  const { processStripeEvent } = await import("../lib/stripe-events");
+  const dq = await import("../lib/queries/donations");
+  const mkDonation = async (over: Partial<typeof schema.donations.$inferInsert> = {}) => {
+    const [row] = await db.insert(schema.donations).values({
+      campaignId: active!.id,
+      participantId: p3.id,
+      grossAmountCents: 10256,
+      designatedAmountCents: 10000,
+      feeCoveredCents: 256,
+      donorNameCiphertext: c.encryptField("Jordan Smith", c.CTX.donorName),
+      donorEmailCiphertext: c.encryptField("jordan@donor.test", c.CTX.donorEmail),
+      donorEmailBlindIndex: c.blindIndex("email", "jordan@donor.test"),
+      messageCiphertext: c.encryptField("Go team", c.CTX.donorMessage),
+      status: "pending",
+      ...over,
+    }).returning();
+    return row!;
+  };
+  // Each session gets its own PaymentIntent, as in reality: cs_test_1 → pi_1.
+  // The unique index on stripe_payment_intent_id is deliberate and must hold.
+  const sessionEvt = (id: string, over: Record<string, unknown>) =>
+    ({ id: `evt_${crypto.randomUUID()}`, type: "checkout.session.completed", data: { object: { id, object: "checkout.session", payment_status: "paid", amount_total: 10256, payment_intent: `pi_${id.replace("cs_test_", "")}`, payment_method_types: ["card"], ...over } } }) as unknown as Stripe.Event;
+
+  const before = await dq.getCampaignStats(active!.id);
+
+  // happy path
+  const d1 = await mkDonation({ stripeCheckoutSessionId: "cs_test_1" });
+  check("completed+paid → processed", await processStripeEvent(sessionEvt("cs_test_1", { metadata: { donationId: d1.id } })), "processed");
+  const [d1after] = await db.select().from(schema.donations).where(eq(schema.donations.id, d1.id));
+  check("status succeeded", d1after!.status, "succeeded");
+  check("payment intent stored from event", d1after!.stripePaymentIntentId, "pi_1");
+  check("payment method type stored", d1after!.paymentMethodType, "card");
+  check("receipt sent (timestamp set)", Boolean(d1after!.receiptSentAt), true);
+  check("replayed event is ignored", await processStripeEvent(sessionEvt("cs_test_1", { metadata: { donationId: d1.id } })), "ignored");
+  const after = await dq.getCampaignStats(active!.id);
+  check("stats grew by the designated amount only", after.raisedCents - before.raisedCents, 10000);
+  check("stats donor count grew by one", after.donorCount - before.donorCount, 1);
+
+  // tamper / mismatch
+  const d2 = await mkDonation({ stripeCheckoutSessionId: "cs_test_2" });
+  check("metadata id without matching session id is ignored", await processStripeEvent(sessionEvt("cs_test_OTHER", { metadata: { donationId: d2.id } })), "ignored");
+  check("amount mismatch is processed (as failure)", await processStripeEvent(sessionEvt("cs_test_2", { metadata: { donationId: d2.id }, amount_total: 999999 })), "processed");
+  check("mismatched donation marked failed, not succeeded", (await db.select().from(schema.donations).where(eq(schema.donations.id, d2.id)))[0]!.status, "failed");
+  check("failed donation not in stats", (await dq.getCampaignStats(active!.id)).raisedCents, after.raisedCents);
+
+  // ACH: completed but unpaid, then async success
+  const d3 = await mkDonation({ stripeCheckoutSessionId: "cs_test_3" });
+  await processStripeEvent(sessionEvt("cs_test_3", { metadata: { donationId: d3.id }, payment_status: "unpaid", payment_intent: "pi_3", payment_method_types: ["us_bank_account"] }));
+  const [d3mid] = await db.select().from(schema.donations).where(eq(schema.donations.id, d3.id));
+  check("unpaid session stays pending", d3mid!.status, "pending");
+  check("but records the payment intent", d3mid!.stripePaymentIntentId, "pi_3");
+  check("async_payment_succeeded settles it", await processStripeEvent({ ...sessionEvt("cs_test_3", { metadata: { donationId: d3.id }, payment_intent: "pi_3" }), type: "checkout.session.async_payment_succeeded" } as never), "processed");
+  check("now succeeded", (await db.select().from(schema.donations).where(eq(schema.donations.id, d3.id)))[0]!.status, "succeeded");
+
+  // ACH failure
+  const d4 = await mkDonation({ stripeCheckoutSessionId: "cs_test_4" });
+  await processStripeEvent({ ...sessionEvt("cs_test_4", { metadata: { donationId: d4.id }, payment_status: "unpaid" }), type: "checkout.session.async_payment_failed" } as never);
+  check("async_payment_failed → failed", (await db.select().from(schema.donations).where(eq(schema.donations.id, d4.id)))[0]!.status, "failed");
+
+  // refunds
+  const refundEvt = (pi: string, amount_refunded: number) => ({ id: `evt_${crypto.randomUUID()}`, type: "charge.refunded", data: { object: { id: "ch_1", object: "charge", payment_intent: pi, amount_refunded } } }) as never;
+  const statsPreRefund = await dq.getCampaignStats(active!.id);
+  check("partial refund → partially_refunded", (await processStripeEvent(refundEvt("pi_1", 2000)), (await db.select().from(schema.donations).where(eq(schema.donations.id, d1.id)))[0]!.status), "partially_refunded");
+  check("refunded amount recorded", (await db.select().from(schema.donations).where(eq(schema.donations.id, d1.id)))[0]!.refundedAmountCents, 2000);
+  check("partially refunded gift drops from public totals (conservative)", (await dq.getCampaignStats(active!.id)).raisedCents, statsPreRefund.raisedCents - 10000);
+  await processStripeEvent(refundEvt("pi_1", 10256));
+  check("full refund → refunded", (await db.select().from(schema.donations).where(eq(schema.donations.id, d1.id)))[0]!.status, "refunded");
+  check("refund for unknown intent ignored", await processStripeEvent(refundEvt("pi_nope", 100)), "ignored");
+
+  // dispute
+  const disputeEvt = { id: `evt_${crypto.randomUUID()}`, type: "charge.dispute.created", data: { object: { id: "dp_1", object: "dispute", payment_intent: "pi_3", charge: "ch_3" } } } as never;
+  await processStripeEvent(disputeEvt);
+  check("dispute → disputed", (await db.select().from(schema.donations).where(eq(schema.donations.id, d3.id)))[0]!.status, "disputed");
+  check("unknown event type ignored", await processStripeEvent({ id: "evt_x", type: "customer.created", data: { object: {} } } as never), "ignored");
+
+  console.log("\nDonor wall privacy");
+  const d5 = await mkDonation({ stripeCheckoutSessionId: "cs_test_5", isAnonymous: true, donorNameCiphertext: c.encryptField("Secret Santa", c.CTX.donorName) });
+  await processStripeEvent(sessionEvt("cs_test_5", { metadata: { donationId: d5.id } }));
+  const wall = await dq.listPublicDonations(active!.id, { limit: 10 });
+  const anon = wall.find((w) => w.id === d5.id)!;
+  check("anonymous gift shows no name", anon.donorName, null);
+  check("anonymous gift keeps its message", anon.message, "Go team");
+  check("wall entries carry no email field", Object.keys(anon).some((k) => /email/i.test(k)), false);
+  check("wall excludes refunded and disputed", wall.some((w) => w.id === d1.id || w.id === d3.id), false);
+  check("agoLabel: just now", dq.agoLabel(new Date(), new Date()), "just now");
+  check("agoLabel: 3 hours ago", dq.agoLabel(new Date(Date.now() - 3 * 3600_000)), "3 hours ago");
+  const thanks = await dq.getDonationBySession("cs_test_5");
+  check("thanks page gets first name only", thanks?.firstName, "Secret");
+  check("thanks page never exposes ciphertext", thanks ? "nameCiphertext" in thanks : false, false);
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);
