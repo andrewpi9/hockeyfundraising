@@ -5,9 +5,14 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { customAlphabet } from "nanoid";
+import { and, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { campaigns } from "@/lib/db/schema";
+import { campaigns, participants, participantInvites, users, organizations } from "@/lib/db/schema";
 import { requireAnyOrgAdmin, requireCampaignAdmin } from "@/lib/authz";
+import { encryptField, blindIndex, normalizeEmail, CTX } from "@/lib/crypto";
+import { inviteToken, hashToken, INVITE_TTL_MS } from "@/lib/tokens";
+import { sendParticipantInvite } from "@/lib/email";
+import { siteUrl } from "@/lib/site";
 import { audit } from "@/lib/audit";
 import { limiters } from "@/lib/ratelimit";
 import { runAction, checkbox, dateInput, type ActionState } from "@/lib/actions";
@@ -165,3 +170,114 @@ export async function rotateJoinCode(formData: FormData): Promise<ActionState> {
     return { ok: true, message: "New join code issued. The old one no longer works." };
   });
 }
+
+// ---------------------------------------------------------------- roster (phase 2)
+
+const InviteInput = z.object({
+  campaignId: z.string().uuid(),
+  email: z.email("Enter a valid email").max(200),
+});
+
+export async function inviteParticipant(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const input = InviteInput.parse(Object.fromEntries(formData));
+    const { user, campaign } = await requireCampaignAdmin(input.campaignId);
+    if (!(await limiters.mutation.limit(user.id)).success) return { ok: false, message: "Slow down a little." };
+    if (campaign.status === "closed") return { ok: false, message: "This campaign is closed." };
+
+    const email = normalizeEmail(input.email);
+    const emailIdx = blindIndex("email", email);
+
+    // Already on the roster? Their users.email is plaintext identity, so this
+    // lookup is exact without decrypting anything.
+    const [already] = await db
+      .select({ id: participants.id })
+      .from(participants)
+      .innerJoin(users, eq(participants.userId, users.id))
+      .where(and(eq(participants.campaignId, campaign.id), eq(users.email, email), eq(participants.status, "active")))
+      .limit(1);
+    if (already) return { ok: false, message: "That person is already on the roster." };
+
+    // Re-inviting supersedes any pending invite rather than stacking a second one.
+    await db
+      .delete(participantInvites)
+      .where(and(eq(participantInvites.campaignId, campaign.id), eq(participantInvites.emailBlindIndex, emailIdx), isNull(participantInvites.acceptedAt)));
+
+    const token = inviteToken();
+    const [invite] = await db
+      .insert(participantInvites)
+      .values({
+        campaignId: campaign.id,
+        emailCiphertext: encryptField(email, CTX.inviteEmail),
+        emailBlindIndex: emailIdx,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+        invitedBy: user.id,
+      })
+      .returning({ id: participantInvites.id });
+
+    const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, campaign.orgId)).limit(1);
+    await sendParticipantInvite({
+      to: email,
+      campaignName: campaign.name,
+      orgName: org?.name ?? "the organization",
+      inviterName: user.name,
+      url: siteUrl(`/join/${token}`),
+    });
+
+    await audit({
+      action: "participant.invite",
+      targetType: "participant_invite",
+      targetId: invite!.id,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+      metadata: { campaign_id: campaign.id },
+    });
+
+    revalidatePath(`/admin/campaigns/${campaign.id}`);
+    return { ok: true, message: "Invitation sent." };
+  });
+}
+
+export async function revokeInvite(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const inviteId = z.string().uuid().parse(formData.get("inviteId"));
+    const [invite] = await db.select().from(participantInvites).where(eq(participantInvites.id, inviteId)).limit(1);
+    if (!invite) return { ok: false, message: "Invitation not found." };
+    const { user, campaign } = await requireCampaignAdmin(invite.campaignId);
+
+    await db.delete(participantInvites).where(eq(participantInvites.id, invite.id));
+    await audit({
+      action: "participant.invite_revoke",
+      targetType: "participant_invite",
+      targetId: invite.id,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+    });
+    revalidatePath(`/admin/campaigns/${campaign.id}`);
+    return { ok: true, message: "Invitation revoked." };
+  });
+}
+
+export async function removeParticipant(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const [participant] = await db.select().from(participants).where(eq(participants.id, participantId)).limit(1);
+    if (!participant) return { ok: false, message: "Participant not found." };
+    const { user, campaign } = await requireCampaignAdmin(participant.campaignId);
+
+    // Soft: donations stay attributed and the public page simply disappears.
+    await db.update(participants).set({ status: "removed", updatedAt: new Date() }).where(eq(participants.id, participant.id));
+    await audit({
+      action: "participant.remove",
+      targetType: "participant",
+      targetId: participant.id,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+    });
+    revalidatePath(`/admin/campaigns/${campaign.id}`);
+    revalidatePath(`/c/${campaign.slug}`);
+    return { ok: true, message: "Participant removed." };
+  });
+}
+

@@ -35,9 +35,9 @@ export default clerkMiddleware(
         "script-src": ["https://challenges.cloudflare.com"],
         "frame-src": ["https://challenges.cloudflare.com"],
         "connect-src": ["https://challenges.cloudflare.com"],
-        // Participant photos are pasted URLs until uploads land; images cannot
-        // execute, so https: is the accepted tradeoff for now.
-        "img-src": ["'self'", "data:", "blob:", "https:"],
+        // Participant photos are uploaded to Vercel Blob after magic-byte
+        // validation, so images are allowlisted to that store and Clerk's CDN.
+        "img-src": ["'self'", "data:", "blob:", "https://*.public.blob.vercel-storage.com", "https://img.clerk.com"],
         "font-src": ["'self'", "data:"],
         "object-src": ["'none'"],
         "base-uri": ["'self'"],

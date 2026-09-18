@@ -86,3 +86,28 @@ Receipt ID: ${args.donationId}`;
     ),
   });
 }
+
+export async function sendParticipantInvite(args: {
+  to: string;
+  campaignName: string;
+  orgName: string;
+  inviterName: string | null;
+  url: string;
+}) {
+  const who = args.inviterName ? `${args.inviterName} has` : "Your coach has";
+  await send({
+    to: args.to,
+    subject: `You're invited to fundraise for ${args.campaignName}`,
+    text: `${who} invited you to join ${args.campaignName} for ${args.orgName}.
+
+Accept your invitation: ${args.url}
+
+You'll get a personal page and share link. The link is for you only and expires in 14 days.`,
+    html: shell(
+      `<h1 style="margin:0 0 16px;font-size:20px">You're invited</h1>
+       <p style="margin:0 0 24px;line-height:1.6">${who} invited you to join <strong>${args.campaignName}</strong> for ${args.orgName}. You'll get a personal fundraising page and a share link.</p>
+       <a href="${args.url}" style="display:inline-block;background:#4B9CD3;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600">Accept invitation</a>
+       <p style="margin:24px 0 0;font-size:13px;color:#78716c">This link is for you only and expires in 14 days. If you weren't expecting it, you can ignore this email.</p>`,
+    ),
+  });
+}

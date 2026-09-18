@@ -1,0 +1,81 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
+import { Thermometer } from "@/components/Thermometer";
+import { ProfileForm, PhotoUploader } from "@/components/participant/ProfileForm";
+import { ShareCard } from "@/components/participant/ShareCard";
+import { Stat, card, buttonStyles } from "@/components/ui";
+import { participantOwnerPage } from "@/lib/page-guards";
+import { getParticipantConsole } from "@/lib/queries/participants";
+import { getOrg } from "@/lib/queries/campaigns";
+import { ensurePersonalShareLink } from "@/lib/sharing";
+import { siteUrl } from "@/lib/site";
+
+export const dynamic = "force-dynamic";
+
+export default async function ParticipantConsole({ params }: { params: Promise<{ participantId: string }> }) {
+  const { participantId } = await params;
+  await participantOwnerPage(participantId);
+
+  const [org, data] = await Promise.all([getOrg(), getParticipantConsole(participantId)]);
+  if (!data) notFound();
+  const { participant, campaign, raisedCents, donorCount, clickCount } = data;
+  const shareCode = data.shareCode ?? (await ensurePersonalShareLink(participant.id, campaign.id));
+  const shareUrl = siteUrl(`/r/${shareCode}`);
+
+  return (
+    <>
+      <SiteHeader orgName={org?.name} />
+      <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-4 py-8">
+        <header>
+          <p className="text-sm text-muted">
+            <Link href="/dashboard" className="hover:underline">Dashboard</Link> / {campaign.name}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold">Hi, {participant.displayName.split(" ")[0]}</h1>
+            {campaign.status !== "draft" ? (
+              <Link href={`/c/${campaign.slug}/${participant.slug}`} className={buttonStyles.ghost}>View my public page &rarr;</Link>
+            ) : (
+              <span className="text-sm text-muted">Your page goes live when the campaign launches.</span>
+            )}
+          </div>
+          <div className={`${card} mt-4 p-5`}>
+            <Thermometer raisedCents={raisedCents} goalCents={participant.goalCents} />
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <Stat label="Donors" value={donorCount} />
+            <Stat label="Link clicks" value={clickCount} />
+            <Stat label="Campaign" value={campaign.status} />
+          </div>
+        </header>
+
+        <section className={`${card} p-5`}>
+          <h2 className="text-lg font-bold">Your link</h2>
+          <p className="mb-4 mt-1 text-sm text-muted">
+            Post it anywhere — a story, a group chat, an email signature. The QR code works on a poster or a locker-room whiteboard.
+            Every click is tracked back to you.
+          </p>
+          <ShareCard url={shareUrl} code={shareCode} />
+        </section>
+
+        <section className={`${card} p-5`}>
+          <h2 className="mb-4 text-lg font-bold">Your page</h2>
+          <div className="grid gap-6 sm:grid-cols-[160px_1fr]">
+            <PhotoUploader participantId={participant.id} photoUrl={participant.photoUrl} name={participant.displayName} />
+            <ProfileForm
+              participantId={participant.id}
+              defaults={{
+                displayName: participant.displayName,
+                bio: participant.bio ?? "",
+                goal: participant.goalCents ? String(participant.goalCents / 100) : "",
+                teamRole: participant.teamRole ?? "",
+                classYear: participant.classYear ?? "",
+              }}
+            />
+          </div>
+        </section>
+      </main>
+      <SiteFooter />
+    </>
+  );
+}

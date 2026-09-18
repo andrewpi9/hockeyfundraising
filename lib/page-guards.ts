@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-import { AuthError, requireAnyOrgAdmin, requireUser } from "./authz";
+import { notFound, redirect } from "next/navigation";
+import { AuthError, requireAnyOrgAdmin, requireParticipantOwner, requireUser } from "./authz";
 
 /**
  * Page-level guards. Layouts are the wrong place for this in Next.js — they do
@@ -21,6 +21,19 @@ export async function signedInPage() {
     return await requireUser();
   } catch (err) {
     if (err instanceof AuthError) redirect("/sign-in");
+    throw err;
+  }
+}
+
+/** A participant's own console. Someone else's id 404s rather than confirming it exists. */
+export async function participantOwnerPage(participantId: string) {
+  try {
+    return await requireParticipantOwner(participantId);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      if (err.code === "UNAUTHENTICATED") redirect(`/sign-in?redirect_url=/dashboard/${participantId}`);
+      notFound();
+    }
     throw err;
   }
 }

@@ -209,6 +209,87 @@ async function main() {
   check("participant lookup ignores removed", await pq.getParticipantBySlug(active!.id, "gone"), null);
   check("my participations lists active only", (await pq.listMyParticipations(u2!.id)).length, 0);
 
+  // ------------------------------------------------------------ phase 2: onboarding + sharing
+  console.log("\nUpload validation");
+  const img = await import("../lib/images");
+  check("jpeg magic bytes", img.sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0])), "image/jpeg");
+  check("png magic bytes", img.sniffImageType(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0])), "image/png");
+  check("webp magic bytes", img.sniffImageType(new Uint8Array([...Buffer.from("RIFF"), 0, 0, 0, 0, ...Buffer.from("WEBP")])), "image/webp");
+  check("svg is refused (script container)", img.sniffImageType(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'>")), null);
+  check("gif is refused", img.sniffImageType(Buffer.from("GIF89a")), null);
+  check("empty is refused", img.sniffImageType(new Uint8Array()), null);
+  check("declared MIME is irrelevant: html named .png", img.sniffImageType(Buffer.from("<html>")), null);
+  check("our blob host is recognised", img.isOurBlobUrl("https://abc123.public.blob.vercel-storage.com/participants/x/y.jpg"), true);
+  check("lookalike host is rejected", img.isOurBlobUrl("https://public.blob.vercel-storage.com.evil.com/x.jpg"), false);
+  check("http is rejected", img.isOurBlobUrl("http://abc.public.blob.vercel-storage.com/x.jpg"), false);
+  check("null is rejected", img.isOurBlobUrl(null), false);
+
+  console.log("\nClick analytics privacy");
+  const ua = await import("../lib/ua");
+  check("iPhone Safari → Mobile Safari", ua.uaFamily("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"), "Mobile Safari");
+  check("Instagram in-app detected", ua.uaFamily("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0"), "Instagram");
+  check("desktop Chrome", ua.uaFamily("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"), "Chrome");
+  check("unknown → Other, never the raw string", ua.uaFamily("curl/8.4.0"), "Other");
+  check("referer keeps host only", ua.refererHost("https://www.instagram.com/p/abc123/?token=secret"), "www.instagram.com");
+  check("garbage referer → null", ua.refererHost("not a url"), null);
+
+  console.log("\nMasking + tokens");
+  const { maskEmail } = await import("../lib/mask");
+  check("email masked", maskEmail("jordan.smith@unc.edu"), "j***@unc.edu");
+  check("junk masked", maskEmail("nonsense"), "***");
+  const tok = await import("../lib/tokens");
+  const t1 = tok.inviteToken();
+  check("invite token is long and url-safe", /^[A-Za-z0-9_-]{40,}$/.test(t1), true);
+  check("token hash is sha256 hex", /^[0-9a-f]{64}$/.test(tok.hashToken(t1)), true);
+  check("hash is deterministic", tok.hashToken(t1), tok.hashToken(t1));
+
+  console.log("\nOnboarding data flow");
+  const { ensurePersonalShareLink, recordClick } = await import("../lib/sharing");
+  const { createParticipantForUser } = await import("../lib/participants");
+  const [u3] = await db.insert(schema.users).values({ clerkUserId: "user_3", email: "chris.miller@unc.edu", name: "Chris Miller" }).returning();
+  const [u4] = await db.insert(schema.users).values({ clerkUserId: "user_4", email: "chris.miller2@unc.edu", name: "Chris Miller" }).returning();
+
+  const p3 = await createParticipantForUser(u3!, active!);
+  check("participant created with slug from name", p3.slug, "chris-miller");
+  const p3again = await createParticipantForUser(u3!, active!);
+  check("re-joining is idempotent", p3again.id, p3.id);
+  const p4 = await createParticipantForUser(u4!, active!);
+  check("same display name gets a suffixed slug", p4.slug, "chris-miller-2");
+
+  const code1 = await ensurePersonalShareLink(p3.id, active!.id);
+  const code2 = await ensurePersonalShareLink(p3.id, active!.id);
+  check("personal share link minted on join", typeof code1, "string");
+  check("personal share link is stable", code1, code2);
+
+  const [link] = await db.select().from(schema.shareLinks).where(eq(schema.shareLinks.code, code1));
+  await recordClick(link!.id, { ip: "203.0.113.9", userAgent: "Mozilla/5.0 (iPhone) Version/17.0 Mobile Safari/604.1", referer: "https://instagram.com/x/y?z=1" });
+  await recordClick(link!.id, { ip: "203.0.113.9", userAgent: null, referer: null });
+  const [afterClicks] = await db.select().from(schema.shareLinks).where(eq(schema.shareLinks.id, link!.id));
+  check("click count increments", afterClicks!.clickCount, 2);
+  const events = await db.select().from(schema.linkEvents).where(eq(schema.linkEvents.shareLinkId, link!.id));
+  check("raw ip never stored", events.some((e) => JSON.stringify(e).includes("203.0.113.9")), false);
+  check("referer stored as host only", events[0]!.refererHost, "instagram.com");
+  check("ua stored as family only", events[0]!.uaFamily, "Mobile Safari");
+
+  await db.update(schema.participants).set({ status: "removed" }).where(eq(schema.participants.id, p4.id));
+  await throws("removed participant cannot rejoin themselves", () => createParticipantForUser(u4!, active!), /removed/);
+
+  // Invite binding: token finds the row, but only the invited address may accept.
+  const rawToken = tok.inviteToken();
+  await db.insert(schema.participantInvites).values({
+    campaignId: active!.id,
+    emailCiphertext: c.encryptField("invitee@unc.edu", c.CTX.inviteEmail),
+    emailBlindIndex: c.blindIndex("email", "invitee@unc.edu"),
+    tokenHash: tok.hashToken(rawToken),
+    expiresAt: new Date(Date.now() + 1000 * 60),
+  });
+  const [found] = await db.select().from(schema.participantInvites).where(eq(schema.participantInvites.tokenHash, tok.hashToken(rawToken)));
+  check("invite found by token hash", Boolean(found), true);
+  check("invite matches the invited address", found!.emailBlindIndex === c.blindIndex("email", "Invitee@UNC.edu"), true);
+  check("invite rejects a different address", found!.emailBlindIndex === c.blindIndex("email", "someone.else@unc.edu"), false);
+  const [byWrongToken] = await db.select().from(schema.participantInvites).where(eq(schema.participantInvites.tokenHash, tok.hashToken("wrong")));
+  check("wrong token finds nothing", byWrongToken, undefined);
+
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);
 }

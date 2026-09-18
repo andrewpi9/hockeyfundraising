@@ -3,11 +3,10 @@ import { notFound } from "next/navigation";
 import { adminPage } from "@/lib/page-guards";
 import { updateCampaign } from "@/app/admin/actions";
 import { getCampaignWithTotals } from "@/lib/queries/campaigns";
-import { listParticipantsWithTotals } from "@/lib/queries/participants";
 import { AdminShell, StatusBadge } from "@/components/admin/AdminShell";
 import { CampaignForm } from "@/components/admin/CampaignForm";
 import { StatusControls, JoinCodeCard } from "@/components/admin/StatusControls";
-import { Leaderboard } from "@/components/Leaderboard";
+import { Roster } from "@/components/admin/Roster";
 import { Thermometer } from "@/components/Thermometer";
 import { Stat, card } from "@/components/ui";
 import { formatMoneyShort } from "@/lib/money";
@@ -24,7 +23,6 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
   const campaign = await getCampaignWithTotals(id);
   if (!campaign || campaign.orgId !== org.id) notFound();
 
-  const leaderboard = await listParticipantsWithTotals(campaign.id);
   const publicUrl = siteUrl(`/c/${campaign.slug}`);
 
   return (
@@ -71,8 +69,8 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-bold">Participants</h2>
-            <Leaderboard rows={leaderboard} />
+            <h2 className="mb-3 text-lg font-bold">Roster</h2>
+            <Roster campaignId={campaign.id} campaignSlug={campaign.slug} />
           </section>
         </div>
 
