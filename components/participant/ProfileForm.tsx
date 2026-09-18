@@ -11,7 +11,7 @@ export function ProfileForm({
   defaults,
 }: {
   participantId: string;
-  defaults: { displayName: string; bio: string; goal: string; teamRole: string; classYear: string };
+  defaults: { displayName: string; bio: string; goal: string; teamRole: string; rosterNumber: string; classYear: string };
 }) {
   const [state, action, pending] = useActionState(updateParticipantProfile, null);
   return (
@@ -20,12 +20,15 @@ export function ProfileForm({
       <Field label="Display name">
         <input name="displayName" required minLength={2} maxLength={80} defaultValue={defaults.displayName} className={inputStyles} />
       </Field>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Position / role">
-          <input name="teamRole" maxLength={40} defaultValue={defaults.teamRole} placeholder="Defense" className={inputStyles} />
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Field label="Number">
+          <input name="rosterNumber" maxLength={4} defaultValue={defaults.rosterNumber} placeholder="88" className={`${inputStyles} font-display text-lg`} />
         </Field>
-        <Field label="Class year">
-          <input name="classYear" maxLength={12} defaultValue={defaults.classYear} placeholder="2028" className={inputStyles} />
+        <Field label="Position">
+          <input name="teamRole" maxLength={40} defaultValue={defaults.teamRole} placeholder="Forward" className={inputStyles} />
+        </Field>
+        <Field label="Year">
+          <input name="classYear" maxLength={12} defaultValue={defaults.classYear} placeholder="Junior" className={inputStyles} />
         </Field>
         <Field label="Personal goal ($)">
           <input name="goal" inputMode="decimal" maxLength={20} defaultValue={defaults.goal} placeholder="500" className={inputStyles} />

@@ -14,6 +14,7 @@ export async function listParticipantsWithTotals(campaignId: string): Promise<Le
       displayName: participants.displayName,
       photoUrl: participants.photoUrl,
       teamRole: participants.teamRole,
+      rosterNumber: participants.rosterNumber,
       goalCents: participants.goalCents,
       raisedCents: sql<number>`coalesce(sum(${donations.designatedAmountCents}) filter (where ${SUCCEEDED}), 0)::int`,
       donorCount: sql<number>`count(${donations.id}) filter (where ${SUCCEEDED})::int`,

@@ -41,6 +41,7 @@ export async function Roster({ campaignId, campaignSlug }: { campaignId: string;
                   <Link href={`/c/${campaignSlug}/${participant.slug}`} className="font-semibold hover:underline">
                     {participant.displayName}
                   </Link>
+                  {participant.rosterNumber ? <span className="font-display text-sm font-semibold text-carolina-600 dark:text-carolina-300">#{participant.rosterNumber}</span> : null}
                   {unclaimed ? (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" title="Imported. No account yet — send a claim invite so they can sign in to this page.">
                       unclaimed

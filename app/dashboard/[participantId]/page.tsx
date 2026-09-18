@@ -9,7 +9,6 @@ import { Contacts } from "@/components/participant/Contacts";
 import { Stat, card, buttonStyles } from "@/components/ui";
 import { participantOwnerPage } from "@/lib/page-guards";
 import { getParticipantConsole } from "@/lib/queries/participants";
-import { getOrg } from "@/lib/queries/campaigns";
 import { ensurePersonalShareLink } from "@/lib/sharing";
 import { siteUrl } from "@/lib/site";
 
@@ -19,7 +18,7 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
   const { participantId } = await params;
   await participantOwnerPage(participantId);
 
-  const [org, data] = await Promise.all([getOrg(), getParticipantConsole(participantId)]);
+  const data = await getParticipantConsole(participantId);
   if (!data) notFound();
   const { participant, campaign, raisedCents, donorCount, clickCount } = data;
   const shareCode = data.shareCode ?? (await ensurePersonalShareLink(participant.id, campaign.id));
@@ -27,14 +26,17 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
 
   return (
     <>
-      <SiteHeader orgName={org?.name} />
+      <SiteHeader />
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-4 py-8">
         <header>
           <p className="text-sm text-muted">
             <Link href="/dashboard" className="hover:underline">Dashboard</Link> / {campaign.name}
           </p>
           <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold">Hi, {participant.displayName.split(" ")[0]}</h1>
+            <h1 className="font-display text-3xl font-bold uppercase">
+              Hi, {participant.displayName.split(" ")[0]}
+              {participant.rosterNumber ? <span className="ml-2 text-carolina-500">#{participant.rosterNumber}</span> : null}
+            </h1>
             {campaign.status !== "draft" ? (
               <Link href={`/c/${campaign.slug}/${participant.slug}`} className={buttonStyles.ghost}>View my public page &rarr;</Link>
             ) : (
@@ -75,6 +77,7 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
                 bio: participant.bio ?? "",
                 goal: participant.goalCents ? String(participant.goalCents / 100) : "",
                 teamRole: participant.teamRole ?? "",
+                rosterNumber: participant.rosterNumber ?? "",
                 classYear: participant.classYear ?? "",
               }}
             />

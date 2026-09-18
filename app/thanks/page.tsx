@@ -22,7 +22,7 @@ export default async function ThanksPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <SiteHeader orgName={org?.name} />
+      <SiteHeader />
       <main className="mx-auto w-full max-w-lg flex-1 px-4 py-16">
         <div className={`${card} p-8 text-center`}>
           <h1 className="text-2xl font-bold">Thank you{donation?.firstName ? `, ${donation.firstName}` : ""}.</h1>

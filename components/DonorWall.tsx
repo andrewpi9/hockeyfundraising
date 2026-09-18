@@ -17,7 +17,7 @@ export function DonorWall({ donations, showParticipant = false, campaignSlug }: 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <span className="font-semibold">{name}</span>
-                <span className="font-bold tabular-nums text-carolina-600 dark:text-carolina-300">{formatMoneyShort(d.amountCents)}</span>
+                <span className="font-display text-lg font-bold tabular-nums text-carolina-600 dark:text-carolina-300">{formatMoneyShort(d.amountCents)}</span>
                 <span className="text-xs text-muted">{d.agoLabel}</span>
               </div>
               {showParticipant && d.participantName && d.participantSlug && campaignSlug ? (

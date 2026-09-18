@@ -177,6 +177,8 @@ export const participants = pgTable(
     photoUrl: text("photo_url"),
     goalCents: integer("goal_cents").notNull().default(0),
     teamRole: text("team_role"),
+    /** Jersey / bib / roster number, as text so "00" and "1A" survive. */
+    rosterNumber: text("roster_number"),
     classYear: text("class_year"),
     status: participantStatus("status").notNull().default("active"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),

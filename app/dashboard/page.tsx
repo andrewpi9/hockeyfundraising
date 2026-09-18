@@ -7,7 +7,6 @@ import { card, buttonStyles } from "@/components/ui";
 import { signedInPage } from "@/lib/page-guards";
 import { db } from "@/lib/db";
 import { memberships } from "@/lib/db/schema";
-import { getOrg } from "@/lib/queries/campaigns";
 import { listMyParticipations } from "@/lib/queries/participants";
 
 export const dynamic = "force-dynamic";
@@ -23,11 +22,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const mine = await listMyParticipations(user.id);
   if (mine.length === 1 && !all && !denied) redirect(`/dashboard/${mine[0]!.participant.id}`);
 
-  const org = await getOrg();
 
   return (
     <>
-      <SiteHeader orgName={org?.name} />
+      <SiteHeader />
       <main className="mx-auto w-full max-w-2xl flex-1 space-y-8 px-4 py-12">
         {denied === "admin" ? (
           <p role="alert" className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">

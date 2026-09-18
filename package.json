@@ -16,7 +16,8 @@
     "db:dev": "tsx scripts/devdb.mts",
     "keys:generate": "tsx scripts/keys.mts",
     "db:seed": "tsx scripts/seed.mts",
-    "db:import": "tsx scripts/import-roster.mts"
+    "db:import": "tsx scripts/import-roster.mts",
+    "roster:sync": "tsx scripts/roster-photos.mts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.4",

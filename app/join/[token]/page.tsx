@@ -35,7 +35,7 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
 
   return (
     <>
-      <SiteHeader orgName={org?.name} />
+      <SiteHeader />
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-16">
         <div className={`${card} p-7`}>
           {!row ? (

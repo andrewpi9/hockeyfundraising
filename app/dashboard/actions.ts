@@ -95,6 +95,7 @@ const Profile = z.object({
   bio: z.string().trim().max(2000).optional(),
   goal: z.string().trim().max(20).optional(),
   teamRole: z.string().trim().max(40).optional(),
+  rosterNumber: z.string().trim().max(4).optional(),
   classYear: z.string().trim().max(12).optional(),
 });
 
@@ -115,6 +116,7 @@ export async function updateParticipantProfile(_prev: ActionState, formData: For
         bio: input.bio || null,
         goalCents,
         teamRole: input.teamRole || null,
+        rosterNumber: input.rosterNumber || null,
         classYear: input.classYear || null,
         updatedAt: new Date(),
       })

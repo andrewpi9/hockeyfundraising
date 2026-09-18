@@ -145,6 +145,7 @@ webhook arrives, which is what promotes it and sends the receipt.
 | `npm run db:dev` | bundled WASM Postgres on :5433 |
 | `npm run db:seed` | create the organization row |
 | `npm run db:import -- data/<file>.json [--replace]` | load a previous campaign's roster and donations (see below) |
+| `npm run roster:sync -- --campaign <slug> [--json data/<file>.json]` | pull headshots, numbers, positions and years from the team's public roster page |
 | `npm run db:generate` / `db:push` | migrations |
 | `npm run keys:generate` | fresh PII encryption + index keys |
 | `npm run verify` | 286-check suite against in-process Postgres |
@@ -345,6 +346,21 @@ created. Imported gifts are recorded with `source = import`: they count toward
 the total and are excluded from Stripe fee estimates. If the file carries
 expected per-participant counts and totals, they are reconciled before
 anything is written. Keep data files under `data/` (gitignored — donor names).
+
+## Team branding and roster photos
+
+`lib/brand.ts` names the team and points at `public/brand/` (logo lockup,
+square mark, favicon via `app/icon.png`). The organization row still holds
+the legal identity for receipts.
+
+`npm run roster:sync` reads the team's public roster page (`ROSTER_URL`,
+default unchockey.com), matches players to participants by name — exact, or
+same surname with a first-name prefix (Matt/Matthew) — and stores headshots
+under `public/roster/<slug>.jpg`, served from this site so nothing hotlinks
+the team site and the CSP stays `img-src 'self'`. A photo a participant
+uploaded themselves is never overwritten. The parser is pure and tested
+against the page's real markup (`lib/roster-scrape.ts`). Photos and the logo
+are the team's own assets; confirm with the program before publishing.
 
 ## Operations
 

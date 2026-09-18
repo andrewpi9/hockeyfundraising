@@ -13,6 +13,7 @@ export type AuditAction =
   | "participant.invite"
   | "participant.claim"
   | "roster.import"
+  | "roster.sync"
   | "participant.invite_revoke"
   | "participant.remove"
   | "participant.update_by_admin"

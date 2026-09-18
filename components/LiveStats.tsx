@@ -43,7 +43,7 @@ export function LiveStats({
 
   return (
     <div>
-      <Thermometer raisedCents={stats.raisedCents} goalCents={goalCents} size={size} />
+      <Thermometer raisedCents={stats.raisedCents} goalCents={goalCents} size={size} tone={tone} />
       {donorLine ? (
         <p className={`mt-3 text-sm ${tone === "dark" ? "text-carolina-100" : "text-muted"}`}>
           <strong className="tabular-nums">{stats.donorCount}</strong> {stats.donorCount === 1 ? "donation" : "donations"}

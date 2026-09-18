@@ -38,6 +38,11 @@ export const RosterImport = z.object({
         textsSent: z.number().int().min(0).max(10_000).default(0),
         expectedDonations: z.number().int().min(0).optional(),
         expectedRaised: z.number().min(0).optional(),
+        rosterNumber: z.string().trim().max(4).optional(),
+        teamRole: z.string().trim().max(40).optional(),
+        classYear: z.string().trim().max(12).optional(),
+        /** Site-relative (/roster/x.jpg) or https. */
+        photoUrl: z.string().trim().max(500).regex(/^(\/[^\s]*|https:\/\/[^\s]+)$/).optional(),
       }),
     )
     .min(1),
@@ -171,7 +176,18 @@ export async function importRoster(
       .returning();
     const [participant] = await db
       .insert(participants)
-      .values({ campaignId: campaign!.id, userId: placeholder!.id, slug: pslug, displayName: p.name, status: "active", joinedAt: campaign!.startsAt })
+      .values({
+        campaignId: campaign!.id,
+        userId: placeholder!.id,
+        slug: pslug,
+        displayName: p.name,
+        rosterNumber: p.rosterNumber ?? null,
+        teamRole: p.teamRole ?? null,
+        classYear: p.classYear ?? null,
+        photoUrl: p.photoUrl ?? null,
+        status: "active",
+        joinedAt: campaign!.startsAt,
+      })
       .returning();
     idByName.set(p.name, participant!.id);
     await ensurePersonalShareLink(participant!.id, campaign!.id);

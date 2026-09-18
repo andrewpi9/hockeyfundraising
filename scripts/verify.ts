@@ -608,7 +608,7 @@ async function main() {
   const fixture = {
     campaign: { slug: "legacy-import", name: "Legacy Import", goalCents: 100000, startedDaysAgo: 10 },
     participants: [
-      { name: "Import One", emailsSent: 3, textsSent: 2, expectedDonations: 2, expectedRaised: 150 },
+      { name: "Import One", emailsSent: 3, textsSent: 2, expectedDonations: 2, expectedRaised: 150, rosterNumber: "91", teamRole: "Forward", classYear: "Junior", photoUrl: "/roster/import-one.jpg" },
       { name: "Import Two", emailsSent: 0, textsSent: 0, expectedDonations: 1, expectedRaised: 25 },
       { name: "Import Three", emailsSent: 1, textsSent: 0, expectedDonations: 0, expectedRaised: 0 },
     ],
@@ -637,6 +637,9 @@ async function main() {
   check("sendCount counts emails + texts", one.sendCount, 5);
   check("no contacts fabricated", one.contactCount, 0);
   check("per-participant raised", one.raisedCents, 15000);
+  check("import stores roster number / position / year", [one.participant.rosterNumber, one.participant.teamRole, one.participant.classYear], ["91", "Forward", "Junior"]);
+  check("import stores site-relative photo", one.participant.photoUrl, "/roster/import-one.jpg");
+  await throws("import rejects a non-https, non-relative photo url", () => imp.RosterImport.parse({ ...fixture, participants: [{ ...fixture.participants[0], photoUrl: "http://evil" }] }));
   const placeholders = await db.select().from(schema.users).where(eq(schema.users.isPlaceholder, true));
   check("placeholder users flagged", placeholders.length >= 3, true);
   check("placeholder emails are .invalid", placeholders.every((u) => imp.isPlaceholderEmail(u.email)), true);
@@ -687,6 +690,38 @@ async function main() {
   check("imported gift raises the total", finAfter.raisedCents - finBefore.raisedCents, 10000);
   check("imported gift shows in importedCents", finAfter.importedCents, 10000);
   check("imported gift adds NO Stripe fee", finAfter.estimatedStripeFeeCents, finBefore.estimatedStripeFeeCents);
+
+  // ------------------------------------------------------------ roster page scraper
+  console.log("\nRoster scraper");
+  const scrape = await import("../lib/roster-scrape");
+  const rosterHtml = `
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><div><img data-lazyloaded="1" src="data:image/svg+xml;base64,AAAA" data-src="https://unchockey.com/wp-content/uploads/2026/08/avery-lindqvist-scaled-e1788225371328-300x300.jpg" alt="" /><noscript><img src="https://unchockey.com/wp-content/uploads/2026/08/avery-lindqvist-scaled-e1788225371328-300x300.jpg" /></noscript></div>
+<p><strong>Forward</strong> / 6&#8217;1&#8243; / 195 lbs</p><h4><strong><a href="/player/avery-lindqvist">Avery Lindqvist</a> #88</strong></h4><p><strong>Freshman</strong> / Business Administration</p></div>
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><noscript><img src="https://unchockey.com/wp-content/uploads/2020/08/Headshot-01-1-300x300.jpg" alt="Headshot Icon" /></noscript>
+<p><strong>Defense</strong> / 6&#8217;0&#8243;</p><h4><strong>Theo Halvorsen #22</strong></h4><p><strong>Sophomore</strong> / Economics</p></div>
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><img data-src="https://unchockey.com/wp-content/uploads/2026/08/mg-300x300.jpg" />
+<p><strong>Forward</strong></p><h4><strong><a href="/player/theodore-halvorsen">Theodore Halvorsen</a> #23</strong></h4><p><strong>Senior</strong></p></div>
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><img data-src="https://unchockey.com/wp-content/uploads/2026/08/gg-300x300.jpg" />
+<p><b>Goalie</b> / 5&#8217;11&#8221; / 165 lbs</p><h4><strong><a href="/player/rowan-achterberg/"><span data-sheets-root="1">Rowan Achterberg</span></a> #30</strong></h4><p><strong>Sophomore</strong> / Management &amp; Society</p><p><strong><a class="arrow-right" href="/player/rowan-achterberg/">Full Bio</a></strong></p></div>
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><img data-src="https://unchockey.com/wp-content/uploads/2026/08/km-300x300.jpg" />
+<p><strong>Defense</strong> / 5&#8217;11 / 155 lbs</p><h4><strong><a href="/player/marcus-vance">Marcus Vance</a> #20</strong></h4><p><b>Junior</b> / Biostatistics</p></div>
+<div class="vc_row wpb_row vc_row-fluid player-roster qodef-x"><p>Coaching Staff</p></div>`;
+  const parsed = scrape.parseRosterHtml(rosterHtml);
+  check("parses one player per roster row with a name", parsed.length, 5);
+  check("<b> position and span-wrapped name (goalie card)", [parsed[3]!.name, parsed[3]!.slug, parsed[3]!.number, parsed[3]!.position, parsed[3]!.year], ["Rowan Achterberg", "rowan-achterberg", "30", "Goalie", "Sophomore"]);
+  check("<b> year (Marcus Vance card)", [parsed[4]!.position, parsed[4]!.year], ["Defense", "Junior"]);
+  check("'Full Bio' link never read as a field", parsed[3]!.year !== "Full Bio", true);
+  check("name, number, position, year", [parsed[0]!.name, parsed[0]!.number, parsed[0]!.position, parsed[0]!.year], ["Avery Lindqvist", "88", "Forward", "Freshman"]);
+  check("lazy data-src photo picked up", parsed[0]!.photoUrl?.endsWith("avery-lindqvist-scaled-e1788225371328-300x300.jpg"), true);
+  check("player slug from bio link", parsed[0]!.slug, "avery-lindqvist");
+  check("generic silhouette is NOT a photo", parsed[1]!.photoUrl, null);
+  check("name without a bio link still parses", [parsed[1]!.name, parsed[1]!.number, parsed[1]!.slug], ["Theo Halvorsen", "22", null]);
+  check("exact match", scrape.matchPlayer(parsed, "Avery Lindqvist")?.number, "88");
+  check("case/space insensitive", scrape.matchPlayer(parsed, "  alex KONTOS ")?.number, "88");
+  check("no match → null", scrape.matchPlayer(parsed, "Quinn Delacroix"), null);
+  check("short-name ambiguity (Mat → Matt & Matthew) → null", scrape.matchPlayer(parsed, "The Halvorsen"), null);
+  check("prefix match resolves when unique", scrape.matchPlayer([parsed[0]!, parsed[1]!], "Theodore Halvorsen")?.number, "22");
+  check("too-short first name never loose-matches", scrape.matchPlayer(parsed, "Av Lindqvist"), null);
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);
