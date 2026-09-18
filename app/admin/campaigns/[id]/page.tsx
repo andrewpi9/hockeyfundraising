@@ -7,16 +7,18 @@ import { AdminShell, StatusBadge } from "@/components/admin/AdminShell";
 import { CampaignForm } from "@/components/admin/CampaignForm";
 import { StatusControls, JoinCodeCard } from "@/components/admin/StatusControls";
 import { Roster } from "@/components/admin/Roster";
-import { Thermometer } from "@/components/Thermometer";
-import { Stat, card } from "@/components/ui";
-import { formatMoneyShort } from "@/lib/money";
+import { LiveStats } from "@/components/LiveStats";
+import { Financials } from "@/components/admin/Financials";
+import { RecentDonations } from "@/components/admin/RecentDonations";
+import { card, buttonStyles } from "@/components/ui";
+import { getCampaignFinancials } from "@/lib/queries/admin-donations";
 import { toDateInput } from "@/lib/actions";
 import { siteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 export default async function CampaignAdminPage({ params }: { params: Promise<{ id: string }> }) {
-  const { org } = await adminPage();
+  const { org, user } = await adminPage();
   const { id } = await params;
 
   // adminPage proves org membership; this proves the campaign is in THAT org.
@@ -24,6 +26,7 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
   if (!campaign || campaign.orgId !== org.id) notFound();
 
   const publicUrl = siteUrl(`/c/${campaign.slug}`);
+  const financials = await getCampaignFinancials(campaign.id);
 
   return (
     <AdminShell
@@ -43,12 +46,24 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px] lg:items-start">
         <div className="space-y-6">
           <section className={`${card} p-5`}>
-            <Thermometer raisedCents={campaign.raisedCents} goalCents={campaign.goalCents} />
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              <Stat label="Raised" value={formatMoneyShort(campaign.raisedCents)} />
-              <Stat label="Donations" value={campaign.donorCount} />
-              <Stat label="Participants" value={campaign.participantCount} />
+            <LiveStats
+              endpoint={`/api/campaigns/${campaign.id}/stats`}
+              goalCents={campaign.goalCents}
+              initial={{ raisedCents: campaign.raisedCents, donorCount: campaign.donorCount }}
+            />
+          </section>
+
+          <Financials f={financials} />
+
+          <section>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-bold">Donations</h2>
+              <a href={`/api/admin/campaigns/${campaign.id}/export`} className={buttonStyles.outline} download>
+                Export CSV
+              </a>
             </div>
+            <RecentDonations campaignId={campaign.id} orgId={org.id} actorUserId={user.id} />
+            <p className="mt-2 text-xs text-muted">Viewing or exporting donor details is recorded in the audit log.</p>
           </section>
 
           <section className={`${card} p-5`}>

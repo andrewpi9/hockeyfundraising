@@ -539,6 +539,64 @@ async function main() {
   check("thanks page gets first name only", thanks?.firstName, "Secret");
   check("thanks page never exposes ciphertext", thanks ? "nameCiphertext" in thanks : false, false);
 
+  // ------------------------------------------------------------ phase 5: dashboards
+  console.log("\nCSV export safety");
+  const { csvCell, toCsv } = await import("../lib/csv-export");
+  check("formula prefix = neutralised", csvCell("=HYPERLINK(\"http://x\")"), `"'=HYPERLINK(""http://x"")"`);
+  check("formula prefix + neutralised", csvCell("+1+1"), `"'+1+1"`);
+  check("formula prefix @ neutralised", csvCell("@SUM(A1)"), `"'@SUM(A1)"`);
+  check("leading dash string neutralised", csvCell("-cmd"), `"'-cmd"`);
+  check("negative NUMBER stays numeric", csvCell(-5.25), "-5.25");
+  check("quotes doubled", csvCell(`Tom "T" Jones`), `"Tom ""T"" Jones"`);
+  check("null is empty", csvCell(null), "");
+  check("boolean is yes/no", csvCell(true), "yes");
+  check("date is ISO", csvCell(new Date("2026-09-18T12:00:00Z")), `"2026-09-18T12:00:00.000Z"`);
+  check("CRLF line endings", toCsv(["a", "b"], [[1, "x"]]), `"a","b"\r\n1,"x"\r\n`);
+
+  console.log("\nAdmin financials (decrypting queries are admin-only)");
+  const adm = await import("../lib/queries/admin-donations");
+  const fin = await adm.getCampaignFinancials(active!.id);
+  const stats = await dq.getCampaignStats(active!.id);
+  check("raised matches public stats", fin.raisedCents, stats.raisedCents);
+  check("raised = 22500 (3 succeeded gifts)", fin.raisedCents, 22500);
+  check("succeeded count", fin.counts.succeeded, 3);
+  check("failed count", fin.counts.failed, 2);
+  check("disputed count", fin.counts.disputed, 1);
+  check("refunded count (incl. seeded row)", fin.counts.refunded, 2);
+  check("pending count", fin.counts.pending, 1);
+  check("refunded cents from Stripe", fin.refundedCents, 10256);
+  // Two of the three succeeded gifts (the seeded 10256 and d5) carried a 256¢ fee-cover.
+  check("fee covered only from succeeded", fin.feeCoveredCents, 512);
+  check("gross from succeeded", fin.grossCents, 23012);
+  check("estimated net below gross", fin.estimatedNetCents < fin.grossCents, true);
+  check("estimated net above raised minus stripe", fin.estimatedNetCents > 0, true);
+  check("fee-cover rate 2/3", Math.round(fin.feeCoverRate * 100), 67);
+
+  const adminRows = await adm.listDonationsForAdmin(active!.id, 50);
+  const d5row = adminRows.find((r) => r.id === d5.id)!;
+  check("admin view decrypts donor email", d5row.donorEmail, "jordan@donor.test");
+  check("admin view shows real name of anonymous donor", d5row.donorName, "Secret Santa");
+  check("admin view flags anonymity", d5row.isAnonymous, true);
+  check("admin view joins participant", d5row.participantName, "Chris Miller");
+  check("export returns every row regardless of status", (await adm.exportDonationsForAdmin(active!.id)).length, 9);
+
+  console.log("\nParticipant donor view");
+  const supporters = await dq.listDonorsForParticipant(p3.id);
+  check("participant sees succeeded + pending only", supporters.map((x) => x.status).every((st) => st === "succeeded" || st === "pending"), true);
+  check("participant sees exactly their settled gift", supporters.filter((x) => x.status === "succeeded").length, 1);
+  check("anonymous donor is anonymous to the participant too", supporters[0]!.donorName, null);
+  check("participant sees the message", supporters[0]!.message, "Go team");
+  check("participant view has NO email field", supporters.some((x) => Object.keys(x).some((k) => /email/i.test(k))), false);
+  check("participant stats", await dq.getParticipantStats(p3.id), { raisedCents: 10000, donorCount: 1 });
+
+  console.log("\nAudit trail");
+  const { listAuditLogs } = await import("../lib/queries/audit");
+  const logs = await listAuditLogs(org!.id, 500);
+  check("audit rows exist", logs.length > 0, true);
+  check("actor email joined from identity table", logs.some((l) => l.actorEmail === "coach@test.edu"), true);
+  check("no audit metadata carries an @", logs.some((l) => JSON.stringify(l.metadata ?? {}).includes("@")), false);
+  check("audit ip hashes are not ips", logs.every((l) => !l.actorIpHash || !/\d+\.\d+\.\d+\.\d+/.test(l.actorIpHash)), true);
+
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);
 }

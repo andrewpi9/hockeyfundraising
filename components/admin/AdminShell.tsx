@@ -19,6 +19,7 @@ export function AdminShell({
         <nav className="mb-6 flex gap-4 text-sm text-muted">
           <Link href="/admin" className="hover:underline">Campaigns</Link>
           <Link href="/admin/settings" className="hover:underline">Settings</Link>
+          <Link href="/admin/audit" className="hover:underline">Audit log</Link>
         </nav>
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">{title}</h1>

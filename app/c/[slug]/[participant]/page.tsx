@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
-import { Thermometer } from "@/components/Thermometer";
+import { LiveStats } from "@/components/LiveStats";
 import { FeeDisclosure } from "@/components/FeeDisclosure";
 import { DonateForm } from "@/components/DonateForm";
 import { DonorWall } from "@/components/DonorWall";
@@ -65,10 +65,7 @@ export default async function ParticipantPage({ params, searchParams }: Props) {
               </div>
             </div>
             <div className="mt-8 max-w-xl rounded-2xl bg-white/10 p-5 backdrop-blur">
-              <Thermometer raisedCents={raisedCents} goalCents={participant.goalCents} />
-              <p className="mt-3 text-sm text-carolina-100">
-                <strong className="tabular-nums">{donorCount}</strong> {donorCount === 1 ? "person has" : "people have"} given so far
-              </p>
+              <LiveStats endpoint={`/api/participants/${participant.id}/stats`} goalCents={participant.goalCents} initial={{ raisedCents, donorCount }} tone="dark" />
             </div>
           </div>
         </section>

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
-import { Thermometer } from "@/components/Thermometer";
+import { LiveStats } from "@/components/LiveStats";
+import { Supporters } from "@/components/participant/Supporters";
 import { ProfileForm, PhotoUploader } from "@/components/participant/ProfileForm";
 import { ShareCard } from "@/components/participant/ShareCard";
 import { Contacts } from "@/components/participant/Contacts";
@@ -41,7 +42,7 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
             )}
           </div>
           <div className={`${card} mt-4 p-5`}>
-            <Thermometer raisedCents={raisedCents} goalCents={participant.goalCents} />
+            <LiveStats endpoint={`/api/participants/${participant.id}/stats`} goalCents={participant.goalCents} initial={{ raisedCents, donorCount }} />
           </div>
           <div className="mt-3 grid grid-cols-3 gap-3">
             <Stat label="Donors" value={donorCount} />
@@ -58,6 +59,8 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
           </p>
           <ShareCard url={shareUrl} code={shareCode} />
         </section>
+
+        <Supporters participantId={participant.id} />
 
         <Contacts participantId={participant.id} campaignActive={campaign.status === "active"} />
 

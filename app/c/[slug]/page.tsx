@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
-import { Thermometer } from "@/components/Thermometer";
+import { LiveStats } from "@/components/LiveStats";
 import { Leaderboard } from "@/components/Leaderboard";
 import { FeeDisclosure } from "@/components/FeeDisclosure";
 import { DonateForm } from "@/components/DonateForm";
@@ -52,9 +52,13 @@ export default async function CampaignPage({ params }: Props) {
               <p className="mt-3 inline-block rounded-full bg-white/15 px-3 py-1 text-sm">This campaign has ended.</p>
             ) : null}
             <div className="mt-8 max-w-xl rounded-2xl bg-white/10 p-5 backdrop-blur">
-              <Thermometer raisedCents={campaign.raisedCents} goalCents={campaign.goalCents} />
-              <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-carolina-100">
-                <span><strong className="tabular-nums">{campaign.donorCount}</strong> {campaign.donorCount === 1 ? "donor" : "donors"}</span>
+              <LiveStats
+                endpoint={`/api/campaigns/${campaign.id}/stats`}
+                goalCents={campaign.goalCents}
+                initial={{ raisedCents: campaign.raisedCents, donorCount: campaign.donorCount }}
+                tone="dark"
+              />
+              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-carolina-100">
                 <span><strong className="tabular-nums">{campaign.participantCount}</strong> participants</span>
                 {daysLeft !== null && campaign.status === "active" ? (
                   <span><strong className="tabular-nums">{daysLeft}</strong> {daysLeft === 1 ? "day" : "days"} left</span>

@@ -98,3 +98,56 @@ export async function getCampaignStats(campaignId: string) {
     .where(and(eq(donations.campaignId, campaignId), SUCCEEDED));
   return { raisedCents: row?.raisedCents ?? 0, donorCount: row?.donorCount ?? 0, latestAt: row?.latestAt ?? null };
 }
+
+// ---------------------------------------------------------------- participant's own view (phase 5)
+
+/**
+ * What a participant sees about their donors: enough to say thank you, no more.
+ * No email — deliberately. A donor's chosen anonymity is honoured here too.
+ */
+export type SupporterEntry = {
+  id: string;
+  amountCents: number;
+  donorName: string | null;
+  message: string | null;
+  agoLabel: string;
+  status: "succeeded" | "pending";
+};
+
+export async function listDonorsForParticipant(participantId: string, now: Date = new Date()): Promise<SupporterEntry[]> {
+  const rows = await db
+    .select({
+      id: donations.id,
+      amountCents: donations.designatedAmountCents,
+      nameCiphertext: donations.donorNameCiphertext,
+      messageCiphertext: donations.messageCiphertext,
+      isAnonymous: donations.isAnonymous,
+      status: donations.status,
+      createdAt: donations.createdAt,
+    })
+    .from(donations)
+    .where(and(eq(donations.participantId, participantId), sql`${donations.status} in ('succeeded', 'pending')`))
+    .orderBy(desc(donations.createdAt))
+    .limit(200);
+
+  return rows.map((r) => ({
+    id: r.id,
+    amountCents: r.amountCents,
+    donorName: r.isAnonymous ? null : decryptOptional(r.nameCiphertext, CTX.donorName),
+    message: decryptOptional(r.messageCiphertext, CTX.donorMessage),
+    agoLabel: agoLabel(r.createdAt, now),
+    status: r.status as "succeeded" | "pending",
+  }));
+}
+
+/** PII-free numbers for a participant's live thermometer. */
+export async function getParticipantStats(participantId: string) {
+  const [row] = await db
+    .select({
+      raisedCents: sql<number>`coalesce(sum(${donations.designatedAmountCents}), 0)::int`,
+      donorCount: sql<number>`count(*)::int`,
+    })
+    .from(donations)
+    .where(and(eq(donations.participantId, participantId), SUCCEEDED));
+  return { raisedCents: row?.raisedCents ?? 0, donorCount: row?.donorCount ?? 0 };
+}
