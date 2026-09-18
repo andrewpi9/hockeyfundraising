@@ -51,7 +51,7 @@ export async function RecentDonations({ campaignId, orgId, actorUserId }: { camp
               <td className="px-4 py-2.5 text-right tabular-nums text-muted">{formatMoney(r.grossCents)}{r.refundedCents ? <div className="text-xs">−{formatMoney(r.refundedCents)}</div> : null}</td>
               <td className={`px-4 py-2.5 text-xs font-semibold uppercase ${STATUS_TONE[r.status] ?? ""}`}>{r.status.replace("_", " ")}</td>
               <td className="px-4 py-2.5">{r.participantName ?? <span className="text-muted">team</span>}</td>
-              <td className="px-4 py-2.5 text-xs text-muted">{r.medium ?? "page"}</td>
+              <td className="px-4 py-2.5 text-xs text-muted">{r.source === "import" ? "imported" : (r.medium ?? "page")}</td>
             </tr>
           ))}
         </tbody>

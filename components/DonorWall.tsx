@@ -4,7 +4,7 @@ import type { WallEntry } from "@/lib/queries/donations";
 import { Avatar, card } from "./ui";
 
 /** Pure: everything time-dependent (agoLabel) and every decryption happened in the query. */
-export function DonorWall({ donations, showParticipant = false }: { donations: WallEntry[]; showParticipant?: boolean }) {
+export function DonorWall({ donations, showParticipant = false, campaignSlug }: { donations: WallEntry[]; showParticipant?: boolean; campaignSlug?: string }) {
   if (donations.length === 0) return <p className="text-sm text-muted">No donations yet — be the first to give.</p>;
 
   return (
@@ -20,9 +20,9 @@ export function DonorWall({ donations, showParticipant = false }: { donations: W
                 <span className="font-bold tabular-nums text-carolina-600 dark:text-carolina-300">{formatMoneyShort(d.amountCents)}</span>
                 <span className="text-xs text-muted">{d.agoLabel}</span>
               </div>
-              {showParticipant && d.participantName && d.participantSlug ? (
+              {showParticipant && d.participantName && d.participantSlug && campaignSlug ? (
                 <div className="mt-0.5 text-xs text-muted">
-                  for <Link href={`./${d.participantSlug}`} className="underline underline-offset-2 hover:text-carolina-500">{d.participantName}</Link>
+                  for <Link href={`/c/${campaignSlug}/${d.participantSlug}`} className="underline underline-offset-2 hover:text-carolina-500">{d.participantName}</Link>
                 </div>
               ) : null}
               {d.message ? <p className="mt-1.5 text-sm leading-relaxed text-muted">&ldquo;{d.message}&rdquo;</p> : null}

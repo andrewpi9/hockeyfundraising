@@ -27,6 +27,7 @@ export type AdminDonationRow = {
   participantName: string | null;
   participantSlug: string | null;
   medium: string | null;
+  source: "stripe" | "import";
   stripePaymentIntentId: string | null;
 };
 
@@ -62,6 +63,7 @@ async function rows(campaignId: string, limit?: number): Promise<AdminDonationRo
     participantName,
     participantSlug,
     medium,
+    source: d.source,
     stripePaymentIntentId: d.stripePaymentIntentId,
   }));
 }
@@ -75,6 +77,8 @@ export type Financials = {
   feeCoveredCents: number;
   platformFeeCents: number;
   refundedCents: number;
+  /** Gifts recorded from outside Stripe (imports). Counted in raised, excluded from fee estimates. */
+  importedCents: number;
   estimatedStripeFeeCents: number;
   estimatedNetCents: number;
   counts: Record<"succeeded" | "pending" | "refunded" | "partially_refunded" | "failed" | "disputed", number>;
@@ -98,20 +102,26 @@ export async function getCampaignFinancials(campaignId: string): Promise<Financi
       failed: sql<number>`count(*) filter (where ${s("failed")})::int`,
       disputed: sql<number>`count(*) filter (where ${s("disputed")})::int`,
       covered: sql<number>`count(*) filter (where ${s("succeeded")} and ${donations.feeCoveredCents} > 0)::int`,
+      imported: sql<number>`coalesce(sum(${donations.designatedAmountCents}) filter (where ${s("succeeded")} and ${donations.source} = 'import'), 0)::int`,
+      grossStripe: sql<number>`coalesce(sum(${donations.grossAmountCents}) filter (where ${s("succeeded")} and ${donations.source} = 'stripe'), 0)::int`,
+      succeededStripe: sql<number>`count(*) filter (where ${s("succeeded")} and ${donations.source} = 'stripe')::int`,
     })
     .from(donations)
     .where(eq(donations.campaignId, campaignId));
 
   const succeeded = r?.succeeded ?? 0;
-  // Stripe's fee is percent-of-gross plus a fixed amount PER CHARGE. The percent
-  // part sums linearly; the fixed part is added once per succeeded gift.
-  const est = succeeded > 0 ? estimatedStripeFee(r!.gross) + (succeeded - 1) * estimatedStripeFee(0) : 0;
+  const succeededStripe = r?.succeededStripe ?? 0;
+  // Stripe's fee is percent-of-gross plus a fixed amount PER CHARGE, and only on
+  // gifts that actually went through Stripe. The percent part sums linearly; the
+  // fixed part is added once per such gift.
+  const est = succeededStripe > 0 ? estimatedStripeFee(r!.grossStripe) + (succeededStripe - 1) * estimatedStripeFee(0) : 0;
   return {
     raisedCents: r?.raised ?? 0,
     grossCents: r?.gross ?? 0,
     feeCoveredCents: r?.feeCovered ?? 0,
     platformFeeCents: r?.platformFee ?? 0,
     refundedCents: r?.refunded ?? 0,
+    importedCents: r?.imported ?? 0,
     estimatedStripeFeeCents: est,
     estimatedNetCents: (r?.gross ?? 0) - est,
     counts: {

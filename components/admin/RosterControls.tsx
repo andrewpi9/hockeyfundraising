@@ -66,3 +66,18 @@ export function RemoveParticipantButton({ participantId, name }: { participantId
     </span>
   );
 }
+
+/** Inline invite that hands an imported row to its real owner. */
+export function ClaimInviteForm({ campaignId, participantId }: { campaignId: string; participantId: string }) {
+  const [state, action, pending] = useActionState(inviteParticipant, null);
+  if (state?.ok) return <span className="text-xs text-carolina-700 dark:text-carolina-300">invite sent</span>;
+  return (
+    <form action={action} className="flex items-center gap-2">
+      <input type="hidden" name="campaignId" value={campaignId} />
+      <input type="hidden" name="participantId" value={participantId} />
+      <input name="email" type="email" required placeholder="their email" aria-label="Email to invite" className={`${inputStyles} h-8 w-44 px-2 py-1 text-xs`} />
+      <Button type="submit" variant="outline" disabled={pending} className="h-8 px-2.5 py-1 text-xs">{pending ? "…" : "Send claim invite"}</Button>
+      {state && !state.ok ? <span className="text-xs text-red-600">{state.message}</span> : null}
+    </form>
+  );
+}

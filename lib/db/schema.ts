@@ -59,6 +59,8 @@ export const donationStatus = pgEnum("donation_status", [
   "disputed",
 ]);
 export const webhookStatus = pgEnum("webhook_status", ["received", "processed", "failed", "ignored"]);
+/** Where a donation record came from. Imported gifts never touched our Stripe, so no fee is estimated on them. */
+export const donationSource = pgEnum("donation_source", ["stripe", "import"]);
 
 // ---------------------------------------------------------------- identity
 
@@ -95,6 +97,9 @@ export const users = pgTable(
     email: text("email").notNull().unique(),
     name: text("name"),
     imageUrl: text("image_url"),
+    /** An imported roster entry with no account yet. Its email is a reserved .invalid
+     *  address, it can never sign in, and a real user claims it through an invite. */
+    isPlaceholder: boolean("is_placeholder").notNull().default(false),
     /** Soft delete keeps donation attribution intact when a Clerk user is removed. */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -196,6 +201,8 @@ export const participantInvites = pgTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     emailCiphertext: text("email_ciphertext").notNull(),
     emailBlindIndex: text("email_blind_index").notNull(),
+    /** When set, accepting claims this existing (placeholder) participant instead of creating one. */
+    participantId: uuid("participant_id").references(() => participants.id, { onDelete: "cascade" }),
     /** sha256 of the raw token; the raw token appears only in the invite email. */
     tokenHash: text("token_hash").notNull().unique(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -381,6 +388,7 @@ export const donations = pgTable(
     isAnonymous: boolean("is_anonymous").notNull().default(false),
 
     status: donationStatus("status").notNull().default("pending"),
+    source: donationSource("source").notNull().default("stripe"),
     /** "card" | "us_bank_account" | … — reporting only, not PII. */
     paymentMethodType: text("payment_method_type"),
 

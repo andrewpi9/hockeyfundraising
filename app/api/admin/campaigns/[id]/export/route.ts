@@ -34,7 +34,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   });
 
   const csv = toCsv(
-    ["Date (UTC)", "Status", "Donor name", "Donor email", "Anonymous", "Designated ($)", "Fee covered ($)", "Platform fee ($)", "Total charged ($)", "Refunded ($)", "Payment method", "Participant", "Attributed via", "Message", "Stripe payment intent", "Donation id"],
+    ["Date (UTC)", "Status", "Donor name", "Donor email", "Anonymous", "Designated ($)", "Fee covered ($)", "Platform fee ($)", "Total charged ($)", "Refunded ($)", "Payment method", "Participant", "Attributed via", "Source", "Message", "Stripe payment intent", "Donation id"],
     rows.map((r) => [
       r.createdAt,
       r.status,
@@ -49,6 +49,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       r.paymentMethodType,
       r.participantName,
       r.medium,
+      r.source,
       r.message,
       r.stripePaymentIntentId,
       r.id,

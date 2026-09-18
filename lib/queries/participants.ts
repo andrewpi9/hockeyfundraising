@@ -49,7 +49,7 @@ export async function listMyParticipations(userId: string) {
 
 // ---------------------------------------------------------------- phase 2
 
-import { shareLinks, participantInvites } from "@/lib/db/schema";
+import { shareLinks, participantInvites, users } from "@/lib/db/schema";
 import { slugify } from "@/lib/ids";
 import { gt, isNull } from "drizzle-orm";
 
@@ -85,7 +85,7 @@ const participantTotals = {
   )::int`,
   sendCount: sql<number>`(
     (select count(*) from email_invites e where e.participant_id = "participants"."id" and e.status <> 'failed')
-    + (select count(*) from outreach_events o where o.participant_id = "participants"."id" and o.channel = 'sms')
+    + (select count(*) from outreach_events o where o.participant_id = "participants"."id" and o.channel in ('sms', 'email_manual'))
   )::int`,
 };
 
@@ -132,11 +132,12 @@ export async function listPendingInvites(campaignId: string) {
     .orderBy(desc(participantInvites.createdAt));
 }
 
-/** Admin roster: active participants with totals plus a removable handle. */
+/** Admin roster: active participants with totals, plus whether the row is still an unclaimed import. */
 export async function listRoster(campaignId: string) {
   return db
-    .select({ participant: participants, ...participantTotals })
+    .select({ participant: participants, unclaimed: users.isPlaceholder, ...participantTotals })
     .from(participants)
+    .innerJoin(users, eq(participants.userId, users.id))
     .where(and(eq(participants.campaignId, campaignId), eq(participants.status, "active")))
     .orderBy(desc(participantTotals.raisedCents), participants.displayName);
 }

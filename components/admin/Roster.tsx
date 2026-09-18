@@ -4,7 +4,7 @@ import { formatMoneyShort } from "@/lib/money";
 import { decryptField, CTX } from "@/lib/crypto";
 import { maskEmail } from "@/lib/mask";
 import { listRoster, listPendingInvites } from "@/lib/queries/participants";
-import { InviteForm, RevokeInviteButton, RemoveParticipantButton } from "./RosterControls";
+import { InviteForm, RevokeInviteButton, RemoveParticipantButton, ClaimInviteForm } from "./RosterControls";
 
 /** Server component: decrypts invite emails only to mask them. Never renders the full address. */
 export async function Roster({ campaignId, campaignSlug }: { campaignId: string; campaignSlug: string }) {
@@ -33,17 +33,25 @@ export async function Roster({ campaignId, campaignSlug }: { campaignId: string;
         <p className="text-sm text-muted">Nobody has joined yet. Share the join code or send invites above.</p>
       ) : (
         <ul className="space-y-2">
-          {roster.map(({ participant, raisedCents, donorCount, clickCount, contactCount, sendCount }) => (
-            <li key={participant.id} className={`${card} flex items-center gap-3 p-3`}>
+          {roster.map(({ participant, unclaimed, raisedCents, donorCount, clickCount, contactCount, sendCount }) => (
+            <li key={participant.id} className={`${card} flex flex-wrap items-center gap-3 p-3`}>
               <Avatar src={participant.photoUrl} name={participant.displayName} size={40} />
               <div className="min-w-0 flex-1">
-                <Link href={`/c/${campaignSlug}/${participant.slug}`} className="font-semibold hover:underline">
-                  {participant.displayName}
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link href={`/c/${campaignSlug}/${participant.slug}`} className="font-semibold hover:underline">
+                    {participant.displayName}
+                  </Link>
+                  {unclaimed ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" title="Imported. No account yet — send a claim invite so they can sign in to this page.">
+                      unclaimed
+                    </span>
+                  ) : null}
+                </div>
                 <div className="text-xs text-muted">
                   {formatMoneyShort(raisedCents)} · {donorCount} {donorCount === 1 ? "donor" : "donors"} · {contactCount} contacts · {sendCount} sent · {clickCount} clicks
                 </div>
               </div>
+              {unclaimed ? <ClaimInviteForm campaignId={campaignId} participantId={participant.id} /> : null}
               <RemoveParticipantButton participantId={participant.id} name={participant.displayName} />
             </li>
           ))}

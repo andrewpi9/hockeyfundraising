@@ -18,8 +18,6 @@ export function FeeDisclosure({ platformFeeBps, allowFeeCover }: { platformFeeBp
         <dd className="text-right tabular-nums">
           {(percent * 100).toFixed(1)}% + {formatMoney(fixedCents)}
         </dd>
-        <dt className="text-muted">Suggested tip</dt>
-        <dd className="text-right tabular-nums">none</dd>
       </dl>
       <p className="mt-3 text-muted">
         Donations settle directly to the organization&rsquo;s own Stripe account. This site never

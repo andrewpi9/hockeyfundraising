@@ -13,7 +13,7 @@ export type LeaderboardRow = {
   donorCount: number;
 };
 
-export function Leaderboard({ rows }: { rows: LeaderboardRow[] }) {
+export function Leaderboard({ rows, campaignSlug }: { rows: LeaderboardRow[]; campaignSlug: string }) {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted">
@@ -33,7 +33,7 @@ export function Leaderboard({ rows }: { rows: LeaderboardRow[] }) {
         return (
           <li key={row.id}>
             <Link
-              href={`/p/${row.slug}`}
+              href={`/c/${campaignSlug}/${row.slug}`}
               className={`${card} flex items-center gap-3 p-3 transition hover:border-carolina-300 hover:shadow-md`}
             >
               <span className="w-6 shrink-0 text-center text-sm font-bold tabular-nums text-muted">

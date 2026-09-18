@@ -4,12 +4,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { customAlphabet } from "nanoid";
 import { and, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { campaigns, participants, participantInvites, users, organizations } from "@/lib/db/schema";
 import { requireAnyOrgAdmin, requireCampaignAdmin } from "@/lib/authz";
 import { encryptField, blindIndex, normalizeEmail, CTX } from "@/lib/crypto";
+import { joinCode } from "@/lib/ids";
 import { inviteToken, hashToken, INVITE_TTL_MS } from "@/lib/tokens";
 import { sendParticipantInvite } from "@/lib/email";
 import { siteUrl } from "@/lib/site";
@@ -19,8 +19,6 @@ import { runAction, checkbox, dateInput, type ActionState } from "@/lib/actions"
 import { parseDollarsToCents } from "@/lib/money";
 import { uniqueCampaignSlug } from "@/lib/queries/campaigns";
 
-// Uppercase, no I/O/0/1: a join code gets read off a whiteboard.
-const joinCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
 
 const CampaignInput = z.object({
   name: z.string().trim().min(2, "Name is too short").max(120),
@@ -176,6 +174,8 @@ export async function rotateJoinCode(formData: FormData): Promise<ActionState> {
 const InviteInput = z.object({
   campaignId: z.string().uuid(),
   email: z.email("Enter a valid email").max(200),
+  /** When present, the invite claims this imported (placeholder) row instead of creating a new one. */
+  participantId: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 export async function inviteParticipant(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -187,6 +187,19 @@ export async function inviteParticipant(_prev: ActionState, formData: FormData):
 
     const email = normalizeEmail(input.email);
     const emailIdx = blindIndex("email", email);
+
+    let claimTarget: string | null = null;
+    if (input.participantId) {
+      const [target] = await db
+        .select({ id: participants.id, isPlaceholder: users.isPlaceholder })
+        .from(participants)
+        .innerJoin(users, eq(participants.userId, users.id))
+        .where(and(eq(participants.id, input.participantId), eq(participants.campaignId, campaign.id)))
+        .limit(1);
+      if (!target) return { ok: false, message: "That roster entry wasn't found in this campaign." };
+      if (!target.isPlaceholder) return { ok: false, message: "That roster entry already has an account." };
+      claimTarget = target.id;
+    }
 
     // Already on the roster? Their users.email is plaintext identity, so this
     // lookup is exact without decrypting anything.
@@ -210,6 +223,7 @@ export async function inviteParticipant(_prev: ActionState, formData: FormData):
         campaignId: campaign.id,
         emailCiphertext: encryptField(email, CTX.inviteEmail),
         emailBlindIndex: emailIdx,
+        participantId: claimTarget,
         tokenHash: hashToken(token),
         expiresAt: new Date(Date.now() + INVITE_TTL_MS),
         invitedBy: user.id,
@@ -231,11 +245,11 @@ export async function inviteParticipant(_prev: ActionState, formData: FormData):
       targetId: invite!.id,
       orgId: campaign.orgId,
       actorUserId: user.id,
-      metadata: { campaign_id: campaign.id },
+      metadata: { campaign_id: campaign.id, claims_participant: Boolean(claimTarget) },
     });
 
     revalidatePath(`/admin/campaigns/${campaign.id}`);
-    return { ok: true, message: "Invitation sent." };
+    return { ok: true, message: claimTarget ? "Invitation sent. Their existing page and totals will be waiting when they accept." : "Invitation sent." };
   });
 }
 

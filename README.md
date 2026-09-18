@@ -5,10 +5,9 @@ student-athletes join and share a personal page, donors give through Stripe
 Checkout on the **organization's own Stripe account**. The platform records who
 raised what; it never holds, pools or forwards money.
 
-Built as a replacement for commercial platforms that keep ~20% plus a
-"suggested tip." Here the platform fee is 0% and is disclosed on every page
-before checkout. The only cost is Stripe's card processing, and donors are
-offered the option to cover it.
+The platform fee is 0% and is disclosed on every page before checkout. The
+only cost is Stripe's card processing, and donors are offered the option to
+cover it so the full gift reaches the program.
 
 ---
 
@@ -51,13 +50,12 @@ donor ──▶ /api/checkout ──▶ Stripe Checkout (org's account) ──�
 4. Refunds are issued by the org in the **Stripe Dashboard**, never here — the
    restricted key cannot do it. The webhook updates our records.
 
-| | Commercial platform | This |
-|---|---|---|
-| Platform fee | ~20% | **0%**, shown before checkout |
-| Suggested tip | ~15% | none |
-| Card processing | inside the 20% | Stripe's rate (2.9% + 30¢; 2.2% once approved for the nonprofit rate) |
-| Fee covered by donor | — | optional, pre-checked, clearly labelled |
-| Where money sits | platform, paid out later | org's own Stripe → org's bank |
+| | |
+|---|---|
+| Platform fee | **0%**, shown before checkout |
+| Card processing | Stripe's rate (2.9% + 30¢; 2.2% once approved for the nonprofit rate) |
+| Fee covered by donor | optional, pre-checked, clearly labelled |
+| Where money settles | the org's own Stripe account → the org's bank |
 
 ---
 
@@ -146,9 +144,10 @@ webhook arrives, which is what promotes it and sends the receipt.
 | `npm run dev` / `build` / `start` | Next.js |
 | `npm run db:dev` | bundled WASM Postgres on :5433 |
 | `npm run db:seed` | create the organization row |
+| `npm run db:import -- data/<file>.json [--replace]` | load a previous campaign's roster and donations (see below) |
 | `npm run db:generate` / `db:push` | migrations |
 | `npm run keys:generate` | fresh PII encryption + index keys |
-| `npm run verify` | 248-check suite against in-process Postgres |
+| `npm run verify` | 286-check suite against in-process Postgres |
 | `npm run typecheck` / `lint` | |
 
 ---
@@ -335,6 +334,18 @@ Target: Vercel. Any Node 20 host works with `APP_ENV=production`.
 
 ---
 
+## Importing a previous campaign
+
+`npm run db:import -- data/<file>.json` loads a roster and its donation
+history. Each participant becomes a row owned by a placeholder account (a
+reserved `.invalid` address that cannot sign in); the admin roster marks them
+**unclaimed** and offers a claim invite. When the real person accepts, the row
+— page, links, totals — moves to their account rather than a duplicate being
+created. Imported gifts are recorded with `source = import`: they count toward
+the total and are excluded from Stripe fee estimates. If the file carries
+expected per-participant counts and totals, they are reconciled before
+anything is written. Keep data files under `data/` (gitignored — donor names).
+
 ## Operations
 
 - **Rotate PII keys:** add a new id to `PII_ENCRYPTION_KEYS`, point
@@ -353,7 +364,7 @@ Target: Vercel. Any Node 20 host works with `APP_ENV=production`.
 
 ## Testing
 
-`npm run verify` runs 248 checks against an in-process Postgres with
+`npm run verify` runs 286 checks against an in-process Postgres with
 ephemeral keys and no network. It covers: the encryption envelope, AAD and
 rotation; blind-index normalization; IP hashing; the audit PII guard; rate
 limiter semantics including batch cost; every schema constraint; campaign,
@@ -362,7 +373,8 @@ filtering; upload sniffing; click-privacy guarantees; CSV import parsing;
 unsubscribe tokens; the full outreach gate set; the Stripe webhook state
 machine (paid, ACH-delayed, mismatch, partial/full refund, dispute, replay);
 donor-wall anonymity; CSV export formula neutralization; admin financials;
-and the audit trail.
+and the audit trail; roster import with reconciliation, claiming imported
+rows, and mixed-source financials.
 
 It does **not** exercise Clerk-gated pages (requires live Clerk keys) or
 live Stripe/Resend calls. Those are verified by the end-to-end donation in

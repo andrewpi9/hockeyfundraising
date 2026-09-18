@@ -80,11 +80,11 @@ export default async function CampaignPage({ params }: Props) {
             ) : null}
             <section id="participants" className="scroll-mt-20">
               <h2 className="mb-3 text-lg font-bold">Participants</h2>
-              <Leaderboard rows={leaderboard} />
+              <Leaderboard rows={leaderboard} campaignSlug={campaign.slug} />
             </section>
             <section>
               <h2 className="mb-3 text-lg font-bold">Recent supporters</h2>
-              <DonorWall donations={wall} showParticipant />
+              <DonorWall donations={wall} showParticipant campaignSlug={campaign.slug} />
             </section>
           </div>
           <aside id="donate" className="scroll-mt-20 space-y-4 lg:sticky lg:top-20">

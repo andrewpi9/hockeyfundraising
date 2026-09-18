@@ -11,6 +11,8 @@ export type AuditAction =
   | "campaign.update"
   | "campaign.status_change"
   | "participant.invite"
+  | "participant.claim"
+  | "roster.import"
   | "participant.invite_revoke"
   | "participant.remove"
   | "participant.update_by_admin"

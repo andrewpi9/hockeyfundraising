@@ -13,3 +13,6 @@ export function slugify(input: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 }
+
+/** Uppercase, no I/O/0/1: a join code gets read off a whiteboard. */
+export const joinCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);

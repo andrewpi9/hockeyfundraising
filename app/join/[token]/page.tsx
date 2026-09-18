@@ -5,7 +5,7 @@ import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
 import { AcceptInviteForm } from "@/components/participant/JoinForm";
 import { card, buttonStyles } from "@/components/ui";
 import { db } from "@/lib/db";
-import { participantInvites, campaigns } from "@/lib/db/schema";
+import { participantInvites, campaigns, participants } from "@/lib/db/schema";
 import { optionalUser } from "@/lib/authz";
 import { blindIndex } from "@/lib/crypto";
 import { hashToken } from "@/lib/tokens";
@@ -24,9 +24,10 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
 
   const org = await getOrg();
   const [row] = await db
-    .select({ invite: participantInvites, campaign: campaigns })
+    .select({ invite: participantInvites, campaign: campaigns, claimName: participants.displayName })
     .from(participantInvites)
     .innerJoin(campaigns, eq(participantInvites.campaignId, campaigns.id))
+    .leftJoin(participants, eq(participantInvites.participantId, participants.id))
     .where(and(eq(participantInvites.tokenHash, hashToken(token)), isNull(participantInvites.acceptedAt), gt(participantInvites.expiresAt, new Date())))
     .limit(1);
 
@@ -55,7 +56,11 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
             <>
               <p className="text-sm font-semibold uppercase tracking-widest text-carolina-600">{org?.name}</p>
               <h1 className="mt-1 text-xl font-bold">Join {row.campaign.name}</h1>
-              <p className="mt-2 text-muted">You&rsquo;ll get a personal fundraising page and a share link.</p>
+              <p className="mt-2 text-muted">
+                {row.claimName
+                  ? `Your coach already set up a page for you as ${row.claimName}. Accepting connects it to this account, with everything raised so far.`
+                  : "You\u2019ll get a personal fundraising page and a share link."}
+              </p>
               <AcceptInviteForm token={token} />
             </>
           )}

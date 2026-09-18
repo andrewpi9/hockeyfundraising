@@ -13,7 +13,7 @@ import { runAction, type ActionState } from "@/lib/actions";
 import { parseDollarsToCents } from "@/lib/money";
 import { blindIndex } from "@/lib/crypto";
 import { hashToken } from "@/lib/tokens";
-import { createParticipantForUser } from "@/lib/participants";
+import { createParticipantForUser, claimParticipantForUser } from "@/lib/participants";
 import { sniffImageType, extensionFor, isOurBlobUrl, MAX_PHOTO_BYTES } from "@/lib/images";
 
 // ---------------------------------------------------------------- joining
@@ -71,13 +71,16 @@ export async function acceptInvite(_prev: ActionState, formData: FormData): Prom
     const [campaign] = await db.select().from(campaigns).where(eq(campaigns.id, invite.campaignId)).limit(1);
     if (!campaign || campaign.status === "closed") return { ok: false, message: "That campaign is no longer open." };
 
-    const participant = await createParticipantForUser(user, campaign);
+    const participant = invite.participantId
+      ? await claimParticipantForUser(user, invite.participantId)
+      : await createParticipantForUser(user, campaign);
     await db
       .update(participantInvites)
       .set({ acceptedAt: new Date(), acceptedUserId: user.id })
       .where(eq(participantInvites.id, invite.id));
 
     revalidatePath("/dashboard");
+    revalidatePath(`/c/${campaign.slug}`);
     return { ok: true, message: "Welcome aboard.", id: participant.id };
   });
   if (result?.ok && result.id) redirect(`/dashboard/${result.id}`);

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type Stripe from "stripe";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import { setDb, type Database } from "../lib/db";
 
@@ -56,11 +56,13 @@ async function main() {
   setDb(db as unknown as Database);
 
   const dir = join(process.cwd(), "drizzle");
-  const file = readdirSync(dir).filter((f) => f.endsWith(".sql") && f !== "grants.sql").sort()[0]!;
-  for (const stmt of readFileSync(join(dir, file), "utf8").split("--> statement-breakpoint")) {
-    if (stmt.trim()) await client.exec(stmt.trim());
+  const files = readdirSync(dir).filter((f) => f.endsWith(".sql") && f !== "grants.sql").sort();
+  for (const file of files) {
+    for (const stmt of readFileSync(join(dir, file), "utf8").split("--> statement-breakpoint")) {
+      if (stmt.trim()) await client.exec(stmt.trim());
+    }
   }
-  console.log(`\nSchema applied from ${file}`);
+  console.log(`\nSchema applied from ${files.join(", ")}`);
   const tables = await client.query<{ n: string }>(
     "select table_name as n from information_schema.tables where table_schema='public' order by 1",
   );
@@ -596,6 +598,95 @@ async function main() {
   check("actor email joined from identity table", logs.some((l) => l.actorEmail === "coach@test.edu"), true);
   check("no audit metadata carries an @", logs.some((l) => JSON.stringify(l.metadata ?? {}).includes("@")), false);
   check("audit ip hashes are not ips", logs.every((l) => !l.actorIpHash || !/\d+\.\d+\.\d+\.\d+/.test(l.actorIpHash)), true);
+
+  // ------------------------------------------------------------ phase 6: roster import + claim
+  console.log("\nRoster import");
+  const imp = await import("../lib/import-roster");
+  const { claimParticipantForUser } = await import("../lib/participants");
+  const pq2 = await import("../lib/queries/participants");
+
+  const fixture = {
+    campaign: { slug: "legacy-import", name: "Legacy Import", goalCents: 100000, startedDaysAgo: 10 },
+    participants: [
+      { name: "Import One", emailsSent: 3, textsSent: 2, expectedDonations: 2, expectedRaised: 150 },
+      { name: "Import Two", emailsSent: 0, textsSent: 0, expectedDonations: 1, expectedRaised: 25 },
+      { name: "Import Three", emailsSent: 1, textsSent: 0, expectedDonations: 0, expectedRaised: 0 },
+    ],
+    donations: [
+      { participant: "Import One", amount: 100, donor: "Grandma One", daysAgo: 3, message: "<b>go</b>" },
+      { participant: "Import One", amount: 50, donor: null, daysAgo: 2 },
+      { participant: "Import Two", amount: 25, donor: "Uncle Two", daysAgo: 1 },
+    ],
+  };
+
+  check("reconcile: clean fixture has no problems", imp.reconcile(imp.RosterImport.parse(fixture)), []);
+  const badFixture = { ...fixture, campaign: { ...fixture.campaign, slug: "legacy-bad" }, participants: fixture.participants.map((p) => (p.name === "Import Two" ? { ...p, expectedRaised: 999 } : p)) };
+  await throws("mismatched expectations abort before writing", () => imp.importRoster(badFixture, { orgId: org!.id }), /Reconciliation/);
+  check("nothing written on abort", (await db.select().from(schema.campaigns).where(eq(schema.campaigns.slug, "legacy-bad"))).length, 0);
+  await throws("donation for unknown participant rejected", () => imp.importRoster({ ...fixture, campaign: { ...fixture.campaign, slug: "legacy-bad2" }, donations: [{ participant: "Nobody", amount: 5, donor: null, daysAgo: 0 }] }, { orgId: org!.id }), /unknown participant|Reconciliation/);
+
+  const sum1 = await imp.importRoster(fixture, { orgId: org!.id });
+  check("summary counts", [sum1.participants, sum1.donations, sum1.totalCents, sum1.outreachEvents, sum1.replaced], [3, 3, 17500, 6, false]);
+  const [legacy] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.slug, "legacy-import"));
+  check("campaign created active", legacy?.status, "active");
+  check("campaign start backdated", legacy!.startsAt < new Date(Date.now() - 9 * 86_400_000), true);
+
+  const roster = await pq2.listRoster(legacy!.id);
+  check("all imported rows are unclaimed", roster.every((r) => r.unclaimed), true);
+  const one = roster.find((r) => r.participant.slug === "import-one")!;
+  check("sendCount counts emails + texts", one.sendCount, 5);
+  check("no contacts fabricated", one.contactCount, 0);
+  check("per-participant raised", one.raisedCents, 15000);
+  const placeholders = await db.select().from(schema.users).where(eq(schema.users.isPlaceholder, true));
+  check("placeholder users flagged", placeholders.length >= 3, true);
+  check("placeholder emails are .invalid", placeholders.every((u) => imp.isPlaceholderEmail(u.email)), true);
+
+  check("public stats include imported gifts", await dq.getCampaignStats(legacy!.id), { raisedCents: 17500, donorCount: 3, latestAt: (await dq.getCampaignStats(legacy!.id)).latestAt });
+  const legacyFin = await adm.getCampaignFinancials(legacy!.id);
+  check("financials: all imported", legacyFin.importedCents, 17500);
+  check("financials: no Stripe fee estimated on imports", legacyFin.estimatedStripeFeeCents, 0);
+  check("financials: net equals gross with no Stripe gifts", legacyFin.estimatedNetCents, 17500);
+  const legacyWall = await dq.listPublicDonations(legacy!.id);
+  check("wall: anonymous import has no name", legacyWall.find((w) => w.amountCents === 5000)!.donorName, null);
+  check("wall: message stored raw, escaped at render", legacyWall.find((w) => w.amountCents === 10000)!.message, "<b>go</b>");
+  check("wall: newest first", legacyWall[0]!.amountCents, 2500);
+  check("admin rows carry source", (await adm.listDonationsForAdmin(legacy!.id)).every((r) => r.source === "import"), true);
+  check("import audited", (await db.select().from(schema.auditLogs).where(eq(schema.auditLogs.action, "roster.import"))).length, 1);
+
+  await throws("re-import without --replace refused", () => imp.importRoster(fixture, { orgId: org!.id }), /already exists/);
+  const sum2 = await imp.importRoster(fixture, { orgId: org!.id, replace: true });
+  check("replace reloads", sum2.replaced, true);
+  check("replace does not leave orphan placeholders", (await db.select().from(schema.users).where(eq(schema.users.isPlaceholder, true))).length, placeholders.length);
+  check("replace yields a new campaign id", sum2.campaignId === legacy!.id, false);
+
+  console.log("\nClaiming an imported row");
+  const [legacy2] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.slug, "legacy-import"));
+  const [rowOne] = await db.select().from(schema.participants).where(and(eq(schema.participants.campaignId, legacy2!.id), eq(schema.participants.slug, "import-one")));
+  const [rowTwo] = await db.select().from(schema.participants).where(and(eq(schema.participants.campaignId, legacy2!.id), eq(schema.participants.slug, "import-two")));
+  const [rowThree] = await db.select().from(schema.participants).where(and(eq(schema.participants.campaignId, legacy2!.id), eq(schema.participants.slug, "import-three")));
+  const placeholderOne = rowOne!.userId;
+  const [real1] = await db.insert(schema.users).values({ clerkUserId: "user_real1", email: "real1@unc.edu", name: "Real One" }).returning();
+  const [real2] = await db.insert(schema.users).values({ clerkUserId: "user_real2", email: "real2@unc.edu", name: "Real Two" }).returning();
+
+  const claimed = await claimParticipantForUser(real1!, rowOne!.id);
+  check("claim reassigns the row to the real user", claimed.userId, real1!.id);
+  check("claim keeps the display name", claimed.displayName, "Import One");
+  check("claim keeps the donations", (await dq.getParticipantStats(rowOne!.id)).raisedCents, 15000);
+  check("placeholder user deleted", (await db.select().from(schema.users).where(eq(schema.users.id, placeholderOne))).length, 0);
+  check("row no longer unclaimed", (await pq2.listRoster(legacy2!.id)).find((r) => r.participant.id === rowOne!.id)!.unclaimed, false);
+  check("re-claim by the same user is a no-op", (await claimParticipantForUser(real1!, rowOne!.id)).id, rowOne!.id);
+  await throws("another user cannot take a claimed row", () => claimParticipantForUser(real2!, rowOne!.id), /already belongs/);
+  await claimParticipantForUser(real2!, rowTwo!.id);
+  await throws("a user cannot claim a second row in the same campaign", () => claimParticipantForUser(real2!, rowThree!.id), /already have a page/);
+  await throws("claiming a nonexistent row fails closed", () => claimParticipantForUser(real2!, crypto.randomUUID()), /no longer exists/);
+
+  console.log("\nMixed-source financials");
+  const finBefore = await adm.getCampaignFinancials(active!.id);
+  await db.insert(schema.donations).values({ campaignId: active!.id, participantId: p3.id, grossAmountCents: 10000, designatedAmountCents: 10000, status: "succeeded", source: "import" });
+  const finAfter = await adm.getCampaignFinancials(active!.id);
+  check("imported gift raises the total", finAfter.raisedCents - finBefore.raisedCents, 10000);
+  check("imported gift shows in importedCents", finAfter.importedCents, 10000);
+  check("imported gift adds NO Stripe fee", finAfter.estimatedStripeFeeCents, finBefore.estimatedStripeFeeCents);
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);

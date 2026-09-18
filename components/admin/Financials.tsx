@@ -3,7 +3,6 @@ import { formatMoney, formatMoneyShort } from "@/lib/money";
 import type { Financials as F } from "@/lib/queries/admin-donations";
 
 export function Financials({ f }: { f: F }) {
-  const wouldHaveLost = Math.round(f.raisedCents * 0.2);
   return (
     <section className="space-y-3">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -20,9 +19,10 @@ export function Financials({ f }: { f: F }) {
           {f.counts.failed ? <span>{f.counts.failed} failed/abandoned</span> : null}
         </div>
       ) : null}
-      <p className={`${card} px-4 py-3 text-sm`}>
-        A 20%-fee platform would have kept <strong>{formatMoney(wouldHaveLost)}</strong> of this. Card processing cost about{" "}
-        <strong>{formatMoney(f.estimatedStripeFeeCents)}</strong>, of which donors chose to cover <strong>{formatMoney(f.feeCoveredCents)}</strong>.
+      <p className={`${card} px-4 py-3 text-sm text-muted`}>
+        Card processing on gifts taken through this site is estimated at <strong className="text-fg">{formatMoney(f.estimatedStripeFeeCents)}</strong>;
+        donors chose to cover <strong className="text-fg">{formatMoney(f.feeCoveredCents)}</strong> of it.
+        {f.importedCents > 0 ? ` ${formatMoney(f.importedCents)} was recorded from a previous campaign and is not included in that estimate.` : ""}
       </p>
     </section>
   );
