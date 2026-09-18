@@ -1,5 +1,5 @@
 {
-  "id": "8146af25-2320-4a3f-86d6-8ea9f5f66054",
+  "id": "6e33f502-879c-486a-a5c0-6aa4aef08585",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -2176,6 +2176,7 @@
         "personal",
         "qr",
         "email_invite",
+        "sms",
         "social"
       ]
     },

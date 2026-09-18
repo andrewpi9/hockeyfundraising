@@ -172,3 +172,190 @@ export async function removePhoto(formData: FormData): Promise<ActionState> {
   });
 }
 
+
+// ---------------------------------------------------------------- contacts (phase 3)
+
+import { contacts, contactImports, outreachEvents, organizations } from "@/lib/db/schema";
+import { encryptField, encryptOptional, decryptOptional, CTX } from "@/lib/crypto";
+import { parseContactsCsv, MAX_CSV_BYTES, type ParsedContact } from "@/lib/csv";
+import { countContacts, existingContactIndexes } from "@/lib/queries/contacts";
+import { ensureContactShareLink } from "@/lib/sharing";
+import { sendInvitesForContacts, describeSummary, CONTACT_CAP, OUTREACH_BATCH_MAX } from "@/lib/outreach";
+import { siteUrl } from "@/lib/site";
+import { checkbox } from "@/lib/actions";
+
+/** Encrypts and inserts, skipping anything already present for this participant. Returns how many landed. */
+async function insertContacts(participantId: string, parsed: ParsedContact[], source: "csv" | "manual") {
+  const existing = await existingContactIndexes(participantId);
+  const room = Math.max(0, CONTACT_CAP - (await countContacts(participantId)));
+  let inserted = 0;
+  let duplicates = 0;
+
+  for (const c of parsed) {
+    if (inserted >= room) break;
+    const emailIdx = c.email ? blindIndex("email", c.email) : null;
+    const phoneIdx = c.phone ? blindIndex("phone", c.phone) : null;
+    if ((emailIdx && existing.emails.has(emailIdx)) || (phoneIdx && existing.phones.has(phoneIdx))) {
+      duplicates += 1;
+      continue;
+    }
+    await db.insert(contacts).values({
+      participantId,
+      nameCiphertext: encryptField(c.name, CTX.contactName),
+      emailCiphertext: encryptOptional(c.email, CTX.contactEmail),
+      phoneCiphertext: encryptOptional(c.phone, CTX.contactPhone),
+      emailBlindIndex: emailIdx,
+      phoneBlindIndex: phoneIdx,
+      source,
+    });
+    if (emailIdx) existing.emails.add(emailIdx);
+    if (phoneIdx) existing.phones.add(phoneIdx);
+    inserted += 1;
+  }
+  return { inserted, duplicates, overCap: Math.max(0, parsed.length - duplicates - inserted) };
+}
+
+export async function importContacts(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+    if (!(await limiters.contactImport.limit(participant.id)).success) return { ok: false, message: "Too many imports this hour. Try again later." };
+
+    // The attestation is recorded, not just required. It is the participant's
+    // statement that these are people who know them, not a purchased list.
+    if (!checkbox(formData.get("attest"))) return { ok: false, message: "Please confirm these are your own contacts." };
+
+    const file = formData.get("file");
+    if (!(file instanceof File) || file.size === 0) return { ok: false, message: "Choose a CSV file first." };
+    if (file.size > MAX_CSV_BYTES) return { ok: false, message: "That file is over 1 MB. Export just your contacts, not a whole workbook." };
+
+    const result = parseContactsCsv(await file.text());
+    const { inserted, duplicates, overCap } = await insertContacts(participant.id, result.contacts, "csv");
+
+    await db.insert(contactImports).values({
+      participantId: participant.id,
+      originalFilename: (file.name || "upload.csv").slice(0, 200),
+      byteSize: file.size,
+      rowCount: result.rowCount,
+      importedCount: inserted,
+      skippedCount: result.skipped + duplicates + overCap,
+      attestedConsent: true,
+      errorSummary: result.errors.join(" ") || null,
+    });
+    revalidatePath(`/dashboard/${participant.id}`);
+    const notes: string[] = [];
+    if (duplicates) notes.push(`${duplicates} already on your list`);
+    if (result.skipped) notes.push(`${result.skipped} rows had no usable name, email or phone`);
+    if (overCap) notes.push(`${overCap} not added — the list holds ${CONTACT_CAP}`);
+    return { ok: inserted > 0 || notes.length === 0, message: `Added ${inserted} contact${inserted === 1 ? "" : "s"}.${notes.length ? ` (${notes.join("; ")}.)` : ""}` };
+  });
+}
+
+const ManualContact = z
+  .object({
+    participantId: z.string().uuid(),
+    name: z.string().trim().min(1, "Name is required").max(120),
+    email: z.union([z.email("That email doesn't look right"), z.literal("")]).optional(),
+    phone: z.string().trim().max(32).optional(),
+  })
+  .refine((v) => Boolean(v.email) || Boolean(v.phone?.replace(/\D/g, "").length), { message: "Add an email or a phone number." });
+
+export async function addContact(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const input = ManualContact.parse(Object.fromEntries(formData));
+    const { participant } = await requireParticipantOwner(input.participantId);
+    if (!(await limiters.mutation.limit(participant.id)).success) return { ok: false, message: "Slow down a little." };
+
+    const parsed = parseContactsCsv(`name,email,phone\n"${input.name.replace(/"/g, '""')}",${input.email ?? ""},${input.phone ?? ""}`);
+    if (parsed.contacts.length === 0) return { ok: false, message: "Add a valid email or a 10-digit phone number." };
+
+    const { inserted, duplicates, overCap } = await insertContacts(participant.id, parsed.contacts, "manual");
+    revalidatePath(`/dashboard/${participant.id}`);
+    if (duplicates) return { ok: false, message: "That person is already on your list." };
+    if (overCap) return { ok: false, message: `Your list is full (${CONTACT_CAP}). Remove someone to add another.` };
+    return { ok: inserted === 1, message: inserted === 1 ? `${input.name} added.` : "Could not add that contact." };
+  });
+}
+
+export async function deleteContact(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const contactId = z.string().uuid().parse(formData.get("contactId"));
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+    // Scoped delete: the WHERE carries the owner, so a foreign contact id is a no-op.
+    await db.delete(contacts).where(and(eq(contacts.id, contactId), eq(contacts.participantId, participant.id)));
+    revalidatePath(`/dashboard/${participant.id}`);
+    return { ok: true, message: "Removed." };
+  });
+}
+
+export async function sendInvites(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const contactIds = z.array(z.string().uuid()).min(1, "Select at least one contact").max(OUTREACH_BATCH_MAX, `Send to at most ${OUTREACH_BATCH_MAX} at a time`).parse(formData.getAll("contactIds"));
+    const note = z.string().trim().max(300, "Keep the note under 300 characters").optional().parse(formData.get("note") ?? undefined) || null;
+
+    const { participant } = await requireParticipantOwner(participantId);
+    // The whole batch is charged against the daily allowance up front.
+    if (!(await limiters.emailInvite.limit(participant.id, contactIds.length)).success) {
+      return { ok: false, message: "You've hit today's sending limit. It resets in 24 hours." };
+    }
+
+    const [campaign] = await db.select().from(campaigns).where(eq(campaigns.id, participant.campaignId)).limit(1);
+    if (!campaign || campaign.status !== "active") return { ok: false, message: "Invites can only go out while the campaign is active." };
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, campaign.orgId)).limit(1);
+    if (!org) return { ok: false, message: "Organization not found." };
+
+    const summary = await sendInvitesForContacts({ participant, campaign, org, contactIds, note });
+    revalidatePath(`/dashboard/${participant.id}`);
+    return { ok: summary.sent > 0, message: describeSummary(summary) };
+  });
+}
+
+export type SmsPrep = { ok: true; href: string } | { ok: false; message: string };
+
+/**
+ * Mints the contact's tracked link, records the tap, and returns an sms: URL
+ * for the client to open. The message leaves from the participant's own phone;
+ * this server never sends a text.
+ */
+export async function prepareSms(formData: FormData): Promise<SmsPrep> {
+  try {
+    const contactId = z.string().uuid().parse(formData.get("contactId"));
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+
+    const [row] = await db
+      .select({ contact: contacts, campaign: campaigns })
+      .from(contacts)
+      .innerJoin(campaigns, eq(campaigns.id, participant.campaignId))
+      .where(and(eq(contacts.id, contactId), eq(contacts.participantId, participant.id)))
+      .limit(1);
+    if (!row) return { ok: false, message: "Contact not found." };
+
+    const phone = decryptOptional(row.contact.phoneCiphertext, CTX.contactPhone);
+    if (!phone) return { ok: false, message: "This contact has no phone number." };
+    const name = decryptOptional(row.contact.nameCiphertext, CTX.contactName) ?? "";
+    const first = name.split(" ")[0] ?? "";
+
+    const code = await ensureContactShareLink(participant.id, row.campaign.id, row.contact.id, "sms");
+    await db.insert(outreachEvents).values({ participantId: participant.id, contactId: row.contact.id, channel: "sms" });
+    revalidatePath(`/dashboard/${participant.id}`);
+
+    const body = `Hey${first ? ` ${first}` : ""}! I'm raising money for ${row.campaign.name} this season — anything helps and it's tax-deductible. Here's my page: ${siteUrl(`/r/${code}`)}`;
+    return { ok: true, href: `sms:${phone}?&body=${encodeURIComponent(body)}` };
+  } catch (err) {
+    console.error("[sms] prepare failed:", err instanceof Error ? err.message : "unknown");
+    return { ok: false, message: "Couldn't prepare that text." };
+  }
+}
+
+export async function recordCopy(formData: FormData): Promise<void> {
+  try {
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+    await db.insert(outreachEvents).values({ participantId: participant.id, channel: "copy_link" });
+  } catch {
+    // analytics only
+  }
+}

@@ -5,7 +5,7 @@ CREATE TYPE "public"."email_invite_status" AS ENUM('queued', 'sent', 'delivered'
 CREATE TYPE "public"."membership_role" AS ENUM('owner', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."outreach_channel" AS ENUM('sms', 'email_manual', 'copy_link');--> statement-breakpoint
 CREATE TYPE "public"."participant_status" AS ENUM('invited', 'active', 'removed');--> statement-breakpoint
-CREATE TYPE "public"."share_medium" AS ENUM('personal', 'qr', 'email_invite', 'social');--> statement-breakpoint
+CREATE TYPE "public"."share_medium" AS ENUM('personal', 'qr', 'email_invite', 'sms', 'social');--> statement-breakpoint
 CREATE TYPE "public"."suppression_reason" AS ENUM('unsubscribed', 'bounced', 'complained', 'manual');--> statement-breakpoint
 CREATE TYPE "public"."webhook_status" AS ENUM('received', 'processed', 'failed', 'ignored');--> statement-breakpoint
 CREATE TABLE "audit_logs" (

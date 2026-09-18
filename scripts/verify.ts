@@ -46,6 +46,7 @@ async function main() {
   });
   process.env.PII_ENCRYPTION_ACTIVE_KEY_ID = "k1";
   process.env.PII_INDEX_KEY = randomBytes(32).toString("base64");
+  process.env.EMAIL_SILENT = "1";
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
@@ -289,6 +290,127 @@ async function main() {
   check("invite rejects a different address", found!.emailBlindIndex === c.blindIndex("email", "someone.else@unc.edu"), false);
   const [byWrongToken] = await db.select().from(schema.participantInvites).where(eq(schema.participantInvites.tokenHash, tok.hashToken("wrong")));
   check("wrong token finds nothing", byWrongToken, undefined);
+
+  // ------------------------------------------------------------ phase 3: outreach
+  console.log("\nHTML escaping");
+  const { escapeHtml } = await import("../lib/html");
+  check("script tag neutralised", escapeHtml(`<script>alert("x")</script>`), "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+  check("ampersand and quote", escapeHtml(`Tom & Jerry's`), "Tom &amp; Jerry&#39;s");
+
+  console.log("\nCSV import parsing");
+  const csv = await import("../lib/csv");
+  const headered = csv.parseContactsCsv(`Name,Email,Phone\nAunt Sarah,Sarah@Example.com,(919) 555-0199\nCoach Miller,miller@example.com,\nGrandpa Joe,,704.555.0142\nNobody,,\nAunt Sarah,sarah@example.com,9195550199\n`);
+  check("headered: valid rows kept", headered.contacts.length, 3);
+  check("headered: email normalised", headered.contacts[0]!.email, "sarah@example.com");
+  check("headered: phone normalised", headered.contacts[0]!.phone, "+19195550199");
+  check("headered: row without email or phone skipped", headered.contacts.some((c) => c.name === "Nobody"), false);
+  check("headered: in-file duplicate collapsed", headered.skipped, 2);
+  const firstLast = csv.parseContactsCsv(`First Name,Last Name,E-mail\nChris,Miller,chris@x.com\n`);
+  check("first/last columns joined", firstLast.contacts[0]!.name, "Chris Miller");
+  const both = csv.parseContactsCsv(`Name,First Name,Last Name,Email\n,Chris,Miller,c@x.com\nPat Lee,Pat,Lee,p@x.com\n`);
+  check("empty name cell falls through to first+last", both.contacts[0]!.name, "Chris Miller");
+  check("full name column preferred when present", both.contacts[1]!.name, "Pat Lee");
+  const positional = csv.parseContactsCsv(`Aunt Sarah,sarah@example.com,919-555-0199\nGrandpa Joe,704-555-0142\n`);
+  check("headerless: positional detection", positional.contacts.map((c) => [c.name, c.email, c.phone]), [["Aunt Sarah", "sarah@example.com", "+19195550199"], ["Grandpa Joe", null, "+17045550142"]]);
+  check("bad email rejected, phone keeps row", csv.parseContactsCsv(`name,email,phone\nX,not-an-email,9195550100\n`).contacts[0]!.email, null);
+  check("short phone rejected", csv.parseContactsCsv(`name,email,phone\nX,,12345\n`).contacts.length, 0);
+  const big = csv.parseContactsCsv("name,email\n" + Array.from({ length: 1200 }, (_, i) => `P${i},p${i}@x.com`).join("\n"));
+  check("row cap enforced", big.contacts.length, 1000);
+  check("row cap reported", big.errors.length > 0, true);
+  check("name truncated to 120", csv.parseContactsCsv(`name,email\n${"a".repeat(300)},a@b.co\n`).contacts[0]!.name.length, 120);
+
+  console.log("\nUnsubscribe tokens");
+  const cid = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
+  const utok = c.signUnsubscribeToken(cid);
+  check("token verifies to its contact id", c.verifyUnsubscribeToken(utok), cid);
+  check("tampered mac rejected", c.verifyUnsubscribeToken(utok.slice(0, -1) + (utok.endsWith("A") ? "B" : "A")), null);
+  check("swapped id rejected", c.verifyUnsubscribeToken(`${Buffer.from("0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4e").toString("base64url")}.${utok.split(".")[1]}`), null);
+  check("garbage rejected", c.verifyUnsubscribeToken("hello"), null);
+  check("empty rejected", c.verifyUnsubscribeToken(""), null);
+
+  console.log("\nSuppression + send pipeline");
+  const { applyUnsubscribe } = await import("../lib/unsubscribe");
+  const outreach = await import("../lib/outreach");
+  const { ensureContactShareLink } = await import("../lib/sharing");
+  const cq = await import("../lib/queries/contacts");
+
+  // org needs a postal address before anything can be sent
+  const [orgNoAddr] = await db.select().from(schema.organizations).where(eq(schema.organizations.id, org!.id));
+  await throws("sending refused without org postal address", () => outreach.sendInvitesForContacts({ participant: p3, campaign: active!, org: orgNoAddr!, contactIds: [], note: null }), /mailing address/);
+  await db.update(schema.organizations).set({ addressLine1: "1 Main St", city: "Chapel Hill", state: "NC", postalCode: "27514" }).where(eq(schema.organizations.id, org!.id));
+  const [orgAddr] = await db.select().from(schema.organizations).where(eq(schema.organizations.id, org!.id));
+  check("postal address assembled", outreach.orgPostalAddress(orgAddr!), "1 Main St, Chapel Hill, NC, 27514");
+
+  const mk = async (name: string, email: string | null, phone: string | null) => {
+    const [row] = await db.insert(schema.contacts).values({
+      participantId: p3.id,
+      nameCiphertext: c.encryptField(name, c.CTX.contactName),
+      emailCiphertext: c.encryptOptional(email, c.CTX.contactEmail),
+      phoneCiphertext: c.encryptOptional(phone, c.CTX.contactPhone),
+      emailBlindIndex: email ? c.blindIndex("email", email) : null,
+      phoneBlindIndex: phone ? c.blindIndex("phone", phone) : null,
+    }).returning();
+    return row!;
+  };
+  const cA = await mk("A", "a@contacts.test", null);
+  const cB = await mk("B", "b@contacts.test", null);
+  const cC = await mk("C", null, "9195550111");
+  const cD = await mk("D", "d@contacts.test", null);
+  const [otherP] = await db.select().from(schema.participants).where(eq(schema.participants.id, pa!.id));
+  const foreign = await (async () => {
+    const [row] = await db.insert(schema.contacts).values({ participantId: otherP!.id, nameCiphertext: c.encryptField("F", c.CTX.contactName), emailCiphertext: c.encryptField("f@contacts.test", c.CTX.contactEmail), emailBlindIndex: c.blindIndex("email", "f@contacts.test") }).returning();
+    return row!;
+  })();
+
+  await applyUnsubscribe(cB.id, "unsubscribed", "198.51.100.7");
+  const [supp] = await db.select().from(schema.suppressions).where(eq(schema.suppressions.emailBlindIndex, cB.emailBlindIndex!));
+  check("unsubscribe writes org-wide suppression", supp?.orgId, org!.id);
+  check("unsubscribe flags the contact", Boolean((await db.select().from(schema.contacts).where(eq(schema.contacts.id, cB.id)))[0]!.unsubscribedAt), true);
+  check("unsubscribe is audited without raw ip", (await db.select().from(schema.auditLogs).where(eq(schema.auditLogs.action, "suppression.add")))[0]!.actorIpHash?.includes("198.51"), false);
+  check("re-applying is idempotent", await applyUnsubscribe(cB.id, "unsubscribed"), true);
+  check("suppression lookup by index", await cq.isSuppressed(org!.id, cB.emailBlindIndex!), true);
+
+  // D was emailed yesterday → cooldown
+  await db.update(schema.contacts).set({ lastInvitedAt: new Date(Date.now() - 86_400_000) }).where(eq(schema.contacts.id, cD.id));
+
+  const summary = await outreach.sendInvitesForContacts({ participant: p3, campaign: active!, org: orgAddr!, contactIds: [cA.id, cB.id, cC.id, cD.id, foreign.id], note: "<b>hi</b>" });
+  check("only the eligible contact is sent", summary.sent, 1);
+  check("unsubscribed skipped", summary.skipped.unsubscribed, 1);
+  check("no-email skipped", summary.skipped.noEmail, 1);
+  check("7-day cooldown skipped", summary.skipped.recent, 1);
+  check("another participant's contact skipped", summary.skipped.notOwned, 1);
+  const invitesA = await db.select().from(schema.emailInvites).where(eq(schema.emailInvites.contactId, cA.id));
+  check("email_invites row recorded as sent", invitesA[0]?.status, "sent");
+  check("lastInvitedAt stamped", Boolean((await db.select().from(schema.contacts).where(eq(schema.contacts.id, cA.id)))[0]!.lastInvitedAt), true);
+  const linkA = await db.select().from(schema.shareLinks).where(eq(schema.shareLinks.contactId, cA.id));
+  check("per-contact email link minted", linkA[0]?.medium, "email_invite");
+  check("per-contact link is stable", await ensureContactShareLink(p3.id, active!.id, cA.id, "email_invite"), linkA[0]!.code);
+  check("sms link is a distinct code", (await ensureContactShareLink(p3.id, active!.id, cA.id, "sms")) === linkA[0]!.code, false);
+  const again = await outreach.sendInvitesForContacts({ participant: p3, campaign: active!, org: orgAddr!, contactIds: [cA.id], note: null });
+  check("immediate re-send blocked by cooldown", again.skipped.recent, 1);
+  check("batch capped", (await outreach.sendInvitesForContacts({ participant: p3, campaign: active!, org: orgAddr!, contactIds: Array.from({ length: 40 }, () => crypto.randomUUID()), note: null })).skipped.notOwned, outreach.OUTREACH_BATCH_MAX);
+  check("summary reads naturally", outreach.describeSummary(summary).startsWith("Sent 1."), true);
+
+  console.log("\nBatch rate limit");
+  const bulk = (await import("../lib/ratelimit")).limiters.emailInvite;
+  check("batch of 60 consumes 60", (await bulk.limit("p-batch", 60)).remaining, 40);
+  check("second batch of 60 is refused", (await bulk.limit("p-batch", 60)).success, false);
+
+  console.log("\nContact queries");
+  const listed = await cq.listContactsForParticipant(p3.id);
+  check("contacts listed newest first", listed.length, 4);
+  check("latest invite status joined", listed.find((r) => r.contact.id === cA.id)!.lastInviteStatus, "sent");
+  check("count", await cq.countContacts(p3.id), 4);
+  const dedupeIdx = await cq.existingContactIndexes(p3.id);
+  check("existing email indexes for dedupe", dedupeIdx.emails.has(c.blindIndex("email", "A@contacts.test")), true);
+  check("existing phone indexes for dedupe", dedupeIdx.phones.has(c.blindIndex("phone", "(919) 555-0111")), true);
+  const loaded = await cq.loadContactRows(p3.id);
+  check("loadContactRows decrypts names", loaded.map((r) => r.name).sort(), ["A", "B", "C", "D"]);
+  check("A (just emailed) not eligible", loaded.find((r) => r.name === "A")!.eligibleForEmail, false);
+  check("B (unsubscribed) not eligible", loaded.find((r) => r.name === "B")!.eligibleForEmail, false);
+  check("C (no email) not eligible", loaded.find((r) => r.name === "C")!.eligibleForEmail, false);
+  check("D cooldown: 1 day since invite", loaded.find((r) => r.name === "D")!.daysSinceInvite, 1);
+  check("D eligible again after 7 days", (await cq.loadContactRows(p3.id, new Date(Date.now() + 8 * 86_400_000))).find((r) => r.name === "D")!.eligibleForEmail, true);
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);

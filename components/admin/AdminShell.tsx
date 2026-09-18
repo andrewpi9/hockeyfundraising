@@ -16,10 +16,9 @@ export function AdminShell({
     <>
       <SiteHeader orgName={orgName} />
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <nav className="mb-6 text-sm text-muted">
-          <Link href="/admin" className="hover:underline">
-            Admin
-          </Link>
+        <nav className="mb-6 flex gap-4 text-sm text-muted">
+          <Link href="/admin" className="hover:underline">Campaigns</Link>
+          <Link href="/admin/settings" className="hover:underline">Settings</Link>
         </nav>
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">{title}</h1>

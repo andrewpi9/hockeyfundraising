@@ -4,6 +4,7 @@ import { SiteHeader, SiteFooter } from "@/components/SiteChrome";
 import { Thermometer } from "@/components/Thermometer";
 import { ProfileForm, PhotoUploader } from "@/components/participant/ProfileForm";
 import { ShareCard } from "@/components/participant/ShareCard";
+import { Contacts } from "@/components/participant/Contacts";
 import { Stat, card, buttonStyles } from "@/components/ui";
 import { participantOwnerPage } from "@/lib/page-guards";
 import { getParticipantConsole } from "@/lib/queries/participants";
@@ -57,6 +58,8 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
           </p>
           <ShareCard url={shareUrl} code={shareCode} />
         </section>
+
+        <Contacts participantId={participant.id} campaignActive={campaign.status === "active"} />
 
         <section className={`${card} p-5`}>
           <h2 className="mb-4 text-lg font-bold">Your page</h2>

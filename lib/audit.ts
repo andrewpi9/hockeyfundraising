@@ -4,6 +4,7 @@ import { hashIp } from "./crypto";
 
 export type AuditAction =
   | "auth.bootstrap_admin"
+  | "org.update"
   | "membership.grant"
   | "membership.revoke"
   | "campaign.create"

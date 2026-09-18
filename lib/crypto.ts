@@ -17,7 +17,7 @@
  * database and PII_INDEX_KEY can confirm a guessed email. Keep the index key
  * in a scope the database credential does not share.
  */
-import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
@@ -177,6 +177,33 @@ export function blindIndex(kind: IndexKind, value: string): string {
 export function hashIp(ip: string, now: Date = new Date()): string {
   const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   return createHmac("sha256", keys().indexKey()).update(`ip:${month}:${ip.trim()}`).digest("hex").slice(0, 32);
+}
+
+// ---------------------------------------------------------------- unsubscribe tokens
+
+const UNSUB_MAC_LEN = 43; // 256 bits, base64url, no padding
+
+function unsubMac(contactId: string): string {
+  return createHmac("sha256", keys().indexKey()).update(`unsub:${contactId}`).digest("base64url").slice(0, UNSUB_MAC_LEN);
+}
+
+/**
+ * An unsubscribe link must work with zero friction and no login, so it carries
+ * the contact id — but signed, so nobody can unsubscribe a contact they did
+ * not receive mail about by guessing ids.
+ */
+export function signUnsubscribeToken(contactId: string): string {
+  return `${Buffer.from(contactId, "utf8").toString("base64url")}.${unsubMac(contactId)}`;
+}
+
+export function verifyUnsubscribeToken(token: string): string | null {
+  const [idPart, mac] = token.split(".");
+  if (!idPart || !mac || mac.length !== UNSUB_MAC_LEN) return null;
+  const contactId = Buffer.from(idPart, "base64url").toString("utf8");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(contactId)) return null;
+  const a = Buffer.from(mac);
+  const b = Buffer.from(unsubMac(contactId));
+  return a.length === b.length && timingSafeEqual(a, b) ? contactId : null;
 }
 
 /** For scripts/keys.mts and tests. */

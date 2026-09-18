@@ -11,7 +11,8 @@ import { Redis } from "@upstash/redis";
 
 export type LimitResult = { success: boolean; remaining: number; reset: number };
 export interface Limiter {
-  limit(identifier: string): Promise<LimitResult>;
+  /** `tokens` lets a batch (e.g. 25 emails) consume its whole cost in one call. */
+  limit(identifier: string, tokens?: number): Promise<LimitResult>;
 }
 
 const hasRedis = () =>
@@ -29,14 +30,14 @@ function memoryLimiter(tokens: number, window: Duration): Limiter {
   const buckets = new Map<string, { count: number; resetAt: number }>();
   const windowMs = durationMs(window);
   return {
-    async limit(id) {
+    async limit(id, cost = 1) {
       const now = Date.now();
       const b = buckets.get(id);
       if (!b || now > b.resetAt) {
-        buckets.set(id, { count: 1, resetAt: now + windowMs });
-        return { success: true, remaining: tokens - 1, reset: now + windowMs };
+        buckets.set(id, { count: cost, resetAt: now + windowMs });
+        return { success: cost <= tokens, remaining: Math.max(0, tokens - cost), reset: now + windowMs };
       }
-      b.count += 1;
+      b.count += cost;
       return { success: b.count <= tokens, remaining: Math.max(0, tokens - b.count), reset: b.resetAt };
     },
   };
@@ -47,13 +48,16 @@ function build(name: string, tokens: number, window: Duration): Limiter {
   // Lazy: `next build` imports route modules without any request in flight.
   const resolve = (): Limiter => {
     if (inner) return inner;
+    let created: Limiter;
     if (hasRedis()) {
-      inner = new Ratelimit({
+      const rl = new Ratelimit({
         redis: Redis.fromEnv(),
         limiter: Ratelimit.slidingWindow(tokens, window),
         prefix: `rl:${name}`,
         analytics: false,
       });
+      // Upstash expresses a multi-token request as { rate }.
+      created = { limit: (id, cost = 1) => rl.limit(id, cost > 1 ? { rate: cost } : undefined) };
     } else if (process.env.NODE_ENV === "production") {
       throw new Error(
         "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required in production. " +
@@ -64,11 +68,12 @@ function build(name: string, tokens: number, window: Duration): Limiter {
         warned = true;
         console.warn("[ratelimit] No Upstash credentials — using in-memory limits (development only).");
       }
-      inner = memoryLimiter(tokens, window);
+      created = memoryLimiter(tokens, window);
     }
-    return inner;
+    inner = created;
+    return created;
   };
-  return { limit: (id) => resolve().limit(id) };
+  return { limit: (id, cost = 1) => resolve().limit(id, cost) };
 }
 
 export const limiters = {

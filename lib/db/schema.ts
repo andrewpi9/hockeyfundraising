@@ -33,7 +33,7 @@ const updatedAt = () =>
 export const membershipRole = pgEnum("membership_role", ["owner", "admin"]);
 export const campaignStatus = pgEnum("campaign_status", ["draft", "active", "closed"]);
 export const participantStatus = pgEnum("participant_status", ["invited", "active", "removed"]);
-export const shareMedium = pgEnum("share_medium", ["personal", "qr", "email_invite", "social"]);
+export const shareMedium = pgEnum("share_medium", ["personal", "qr", "email_invite", "sms", "social"]);
 export const contactSource = pgEnum("contact_source", ["csv", "manual"]);
 export const emailInviteStatus = pgEnum("email_invite_status", [
   "queued",

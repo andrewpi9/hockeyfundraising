@@ -33,7 +33,7 @@ export async function Roster({ campaignId, campaignSlug }: { campaignId: string;
         <p className="text-sm text-muted">Nobody has joined yet. Share the join code or send invites above.</p>
       ) : (
         <ul className="space-y-2">
-          {roster.map(({ participant, raisedCents, donorCount, clickCount }) => (
+          {roster.map(({ participant, raisedCents, donorCount, clickCount, contactCount, sendCount }) => (
             <li key={participant.id} className={`${card} flex items-center gap-3 p-3`}>
               <Avatar src={participant.photoUrl} name={participant.displayName} size={40} />
               <div className="min-w-0 flex-1">
@@ -41,7 +41,7 @@ export async function Roster({ campaignId, campaignSlug }: { campaignId: string;
                   {participant.displayName}
                 </Link>
                 <div className="text-xs text-muted">
-                  {formatMoneyShort(raisedCents)} · {donorCount} {donorCount === 1 ? "donor" : "donors"} · {clickCount} clicks
+                  {formatMoneyShort(raisedCents)} · {donorCount} {donorCount === 1 ? "donor" : "donors"} · {contactCount} contacts · {sendCount} sent · {clickCount} clicks
                 </div>
               </div>
               <RemoveParticipantButton participantId={participant.id} name={participant.displayName} />

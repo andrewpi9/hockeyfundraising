@@ -80,6 +80,13 @@ const participantTotals = {
     select coalesce(sum(s.click_count), 0) from share_links s
     where s.participant_id = "participants"."id"
   )::int`,
+  contactCount: sql<number>`(
+    select count(*) from contacts c where c.participant_id = "participants"."id"
+  )::int`,
+  sendCount: sql<number>`(
+    (select count(*) from email_invites e where e.participant_id = "participants"."id" and e.status <> 'failed')
+    + (select count(*) from outreach_events o where o.participant_id = "participants"."id" and o.channel = 'sms')
+  )::int`,
 };
 
 /** Everything the participant's own console needs, in one round trip. */

@@ -281,3 +281,49 @@ export async function removeParticipant(formData: FormData): Promise<ActionState
   });
 }
 
+
+// ---------------------------------------------------------------- organization settings (phase 3)
+
+const OrgInput = z.object({
+  name: z.string().trim().min(2).max(120),
+  legalName: z.string().trim().max(160).optional(),
+  ein: z.union([z.string().trim().regex(/^\d{2}-?\d{7}$/, "EIN looks like 12-3456789"), z.literal("")]).optional(),
+  addressLine1: z.string().trim().max(160).optional(),
+  addressLine2: z.string().trim().max(160).optional(),
+  city: z.string().trim().max(80).optional(),
+  state: z.string().trim().max(2).optional(),
+  postalCode: z.string().trim().max(12).optional(),
+});
+
+export async function updateOrganization(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const { user, org } = await requireAnyOrgAdmin();
+    if (!(await limiters.mutation.limit(user.id)).success) return { ok: false, message: "Slow down a little." };
+    const input = OrgInput.parse(Object.fromEntries(formData));
+
+    const next = {
+      name: input.name,
+      legalName: input.legalName || null,
+      ein: input.ein || null,
+      addressLine1: input.addressLine1 || null,
+      addressLine2: input.addressLine2 || null,
+      city: input.city || null,
+      state: input.state?.toUpperCase() || null,
+      postalCode: input.postalCode || null,
+    };
+    const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => org[k] !== next[k]);
+
+    await db.update(organizations).set({ ...next, updatedAt: new Date() }).where(eq(organizations.id, org.id));
+    await audit({
+      action: "org.update",
+      targetType: "organization",
+      targetId: org.id,
+      orgId: org.id,
+      actorUserId: user.id,
+      metadata: { fields: changed.join(","), field_count: changed.length },
+    });
+    revalidatePath("/admin/settings");
+    revalidatePath("/");
+    return { ok: true, message: changed.length ? "Saved." : "No changes." };
+  });
+}

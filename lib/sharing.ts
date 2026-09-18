@@ -35,3 +35,24 @@ export async function recordClick(shareLinkId: string, req: { ip: string; userAg
     console.error("[click] tracking failed:", err instanceof Error ? err.message : "unknown");
   }
 }
+
+/** One link per (contact, medium) so a gift can be traced to the exact message that produced it. */
+export async function ensureContactShareLink(
+  participantId: string,
+  campaignId: string,
+  contactId: string,
+  medium: "sms" | "email_invite",
+): Promise<string> {
+  const [existing] = await db
+    .select({ code: shareLinks.code })
+    .from(shareLinks)
+    .where(and(eq(shareLinks.contactId, contactId), eq(shareLinks.medium, medium)))
+    .limit(1);
+  if (existing) return existing.code;
+
+  const [created] = await db
+    .insert(shareLinks)
+    .values({ code: shareCode(), participantId, campaignId, contactId, medium })
+    .returning({ code: shareLinks.code });
+  return created!.code;
+}
