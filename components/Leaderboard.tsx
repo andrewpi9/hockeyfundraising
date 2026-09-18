@@ -1,7 +1,17 @@
 import Link from "next/link";
 import { formatMoneyShort } from "@/lib/money";
-import type { LeaderboardRow } from "@/lib/queries";
 import { Avatar, card } from "./ui";
+
+export type LeaderboardRow = {
+  id: string;
+  slug: string;
+  displayName: string;
+  photoUrl: string | null;
+  teamRole: string | null;
+  goalCents: number;
+  raisedCents: number;
+  donorCount: number;
+};
 
 export function Leaderboard({ rows }: { rows: LeaderboardRow[] }) {
   if (rows.length === 0) {
@@ -34,10 +44,8 @@ export function Leaderboard({ rows }: { rows: LeaderboardRow[] }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="truncate font-semibold">{row.displayName}</span>
-                  {row.jerseyNumber ? (
-                    <span className="shrink-0 text-xs text-muted">
-                      #{row.jerseyNumber}
-                    </span>
+                  {row.teamRole ? (
+                    <span className="shrink-0 text-xs text-muted">{row.teamRole}</span>
                   ) : null}
                 </div>
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-carolina-100 dark:bg-navy-800">

@@ -1,28 +1,92 @@
 /**
- * Per-IP fixed window, held in process memory.
+ * Distributed rate limiting on Upstash Redis.
  *
- * A public donate endpoint is a magnet for card testing: a bot posts hundreds
- * of small charges to find live card numbers, and you eat the disputes. This
- * blunts the cheap version of that attack. It does NOT survive a redeploy and
- * is per-instance, so once the campaign is live also turn on Stripe Radar and
- * put Cloudflare in front of the domain.
+ * In-process counters are wrong on serverless: every instance has its own, and
+ * a redeploy resets them all. So production REFUSES to start without Redis
+ * credentials rather than degrading silently. Local development falls back to
+ * memory with a one-time warning so `npm run dev` needs no account.
  */
-const buckets = new Map<string, { count: number; resetAt: number }>();
+import { Ratelimit, type Duration } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
-export function rateLimit(key: string, limit: number, windowMs: number) {
-  const now = Date.now();
-  const existing = buckets.get(key);
-
-  if (!existing || now > existing.resetAt) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return { ok: true, remaining: limit - 1 };
-  }
-  if (existing.count >= limit) {
-    return { ok: false, remaining: 0, retryAfterMs: existing.resetAt - now };
-  }
-  existing.count += 1;
-  return { ok: true, remaining: limit - existing.count };
+export type LimitResult = { success: boolean; remaining: number; reset: number };
+export interface Limiter {
+  limit(identifier: string): Promise<LimitResult>;
 }
+
+const hasRedis = () =>
+  Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+
+let warned = false;
+
+function durationMs(d: Duration): number {
+  const [n, unit] = d.split(" ") as [string, string];
+  const mult = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[unit] ?? 1000;
+  return Number(n) * mult;
+}
+
+function memoryLimiter(tokens: number, window: Duration): Limiter {
+  const buckets = new Map<string, { count: number; resetAt: number }>();
+  const windowMs = durationMs(window);
+  return {
+    async limit(id) {
+      const now = Date.now();
+      const b = buckets.get(id);
+      if (!b || now > b.resetAt) {
+        buckets.set(id, { count: 1, resetAt: now + windowMs });
+        return { success: true, remaining: tokens - 1, reset: now + windowMs };
+      }
+      b.count += 1;
+      return { success: b.count <= tokens, remaining: Math.max(0, tokens - b.count), reset: b.resetAt };
+    },
+  };
+}
+
+function build(name: string, tokens: number, window: Duration): Limiter {
+  let inner: Limiter | null = null;
+  // Lazy: `next build` imports route modules without any request in flight.
+  const resolve = (): Limiter => {
+    if (inner) return inner;
+    if (hasRedis()) {
+      inner = new Ratelimit({
+        redis: Redis.fromEnv(),
+        limiter: Ratelimit.slidingWindow(tokens, window),
+        prefix: `rl:${name}`,
+        analytics: false,
+      });
+    } else if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required in production. " +
+          "Refusing to run with per-instance in-memory rate limits.",
+      );
+    } else {
+      if (!warned) {
+        warned = true;
+        console.warn("[ratelimit] No Upstash credentials — using in-memory limits (development only).");
+      }
+      inner = memoryLimiter(tokens, window);
+    }
+    return inner;
+  };
+  return { limit: (id) => resolve().limit(id) };
+}
+
+export const limiters = {
+  /** Public donation endpoint: the card-testing target. Per IP. */
+  checkout: build("checkout", 8, "1 m"),
+  /** Tracked-link redirects. Per IP. */
+  redirect: build("redirect", 120, "1 m"),
+  /** Live stats polling. Per IP. */
+  stats: build("stats", 60, "1 m"),
+  /** CSV uploads. Per participant. */
+  contactImport: build("import", 5, "1 h"),
+  /** Platform-sent invite emails. Per participant per day — domain reputation guard. */
+  emailInvite: build("invite", 100, "1 d"),
+  /** Participant profile / contact mutations. Per user. */
+  mutation: build("mutation", 60, "1 m"),
+  /** Admin exports of donor PII. Per user. */
+  export: build("export", 10, "1 h"),
+};
 
 export function clientIp(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
@@ -30,20 +94,10 @@ export function clientIp(req: Request): string {
   return req.headers.get("x-real-ip") ?? "unknown";
 }
 
-/** No-ops until TURNSTILE_SECRET_KEY is set, so local dev needs no captcha. */
-export async function verifyTurnstile(token: string | undefined, ip: string) {
-  const secret = process.env.TURNSTILE_SECRET_KEY;
-  if (!secret) return true;
-  if (!token) return false;
-
-  const res = await fetch(
-    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ secret, response: token, remoteip: ip }),
-    },
+export function tooMany(result: LimitResult): Response {
+  const retryAfter = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
+  return Response.json(
+    { error: "Too many requests. Please wait a moment and try again." },
+    { status: 429, headers: { "retry-after": String(retryAfter) } },
   );
-  const data = (await res.json()) as { success?: boolean };
-  return data.success === true;
 }

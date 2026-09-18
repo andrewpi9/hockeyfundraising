@@ -1,6 +1,5 @@
 import { Resend } from "resend";
 import { formatMoney } from "./money";
-import { siteUrl } from "./stripe";
 
 const from = process.env.EMAIL_FROM ?? "fundraising@example.org";
 
@@ -35,21 +34,6 @@ async function send({ to, subject, html, text }: SendArgs) {
 const shell = (body: string) => `<!doctype html><html><body style="margin:0;padding:24px;background:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1c1917">
 <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e7e5e4">${body}</div>
 </body></html>`;
-
-export async function sendMagicLink(to: string, token: string) {
-  const url = siteUrl(`/api/auth/verify?token=${encodeURIComponent(token)}`);
-  await send({
-    to,
-    subject: "Your sign-in link",
-    text: `Sign in: ${url}\n\nThis link works once and expires in 15 minutes.`,
-    html: shell(
-      `<h1 style="margin:0 0 16px;font-size:20px">Sign in</h1>
-       <p style="margin:0 0 24px;line-height:1.6">Click below to sign in. The link works once and expires in 15 minutes.</p>
-       <a href="${url}" style="display:inline-block;background:#4B9CD3;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600">Sign in</a>
-       <p style="margin:24px 0 0;font-size:13px;color:#78716c">If you did not request this, ignore this email.</p>`,
-    ),
-  });
-}
 
 export async function sendDonationReceipt(args: {
   to: string;
