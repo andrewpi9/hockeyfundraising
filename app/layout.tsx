@@ -13,11 +13,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    // `dynamic` is required for Clerk's nonce-based strict CSP.
-    <ClerkProvider dynamic>
-      <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-        <body className="min-h-full flex flex-col font-sans">{children}</body>
-      </html>
-    </ClerkProvider>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col font-sans">
+        {/* Inside <body> per Clerk's guidance. `dynamic` is required for the nonce-based strict CSP. */}
+        <ClerkProvider dynamic>{children}</ClerkProvider>
+      </body>
+    </html>
   );
 }

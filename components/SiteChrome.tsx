@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
+import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { buttonStyles } from "./ui";
 
 export function SiteHeader({ orgName = "Booster Club" }: { orgName?: string }) {
@@ -10,19 +10,24 @@ export function SiteHeader({ orgName = "Booster Club" }: { orgName?: string }) {
           {orgName}
         </Link>
         <nav className="flex items-center gap-2">
-          <SignedIn>
+          <Show when="signed-in">
             <Link href="/dashboard" className={buttonStyles.ghost}>
               Dashboard
             </Link>
             <UserButton />
-          </SignedIn>
-          <SignedOut>
+          </Show>
+          <Show when="signed-out">
             <SignInButton mode="modal">
               <button type="button" className={buttonStyles.ghost}>
                 Sign in
               </button>
             </SignInButton>
-          </SignedOut>
+            <SignUpButton mode="modal">
+              <button type="button" className={buttonStyles.primary}>
+                Sign up
+              </button>
+            </SignUpButton>
+          </Show>
         </nav>
       </div>
     </header>
