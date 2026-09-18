@@ -1,221 +1,381 @@
-# UNC Hockey Fundraising
+# Booster Fundraising Platform
 
-A self-hosted team fundraising platform. Same model as Vertical Raise — a campaign
-page, per-player pages, contact outreach, a coach dashboard — but with **no platform
-fee and no suggested tip**. The only cost is card processing, and donors are given
-the option to cover that themselves.
+A group fundraising platform for a booster organization: admins run campaigns,
+student-athletes join and share a personal page, donors give through Stripe
+Checkout on the **organization's own Stripe account**. The platform records who
+raised what; it never holds, pools or forwards money.
 
-## What it costs to run
+Built as a replacement for commercial platforms that keep ~20% plus a
+"suggested tip." Here the platform fee is 0% and is disclosed on every page
+before checkout. The only cost is Stripe's card processing, and donors are
+offered the option to cover it.
+
+---
+
+## Contents
+
+- [How money moves](#how-money-moves)
+- [Before you launch](#before-you-launch)
+- [Local development](#local-development)
+- [Environment variables](#environment-variables)
+- [Architecture](#architecture)
+- [Security posture](#security-posture)
+- [What a reviewer should know](#what-a-reviewer-should-know)
+- [Deploying](#deploying)
+- [Operations](#operations)
+- [Testing](#testing)
+- [Known limitations](#known-limitations)
+
+---
+
+## How money moves
+
+```
+donor ──▶ /api/checkout ──▶ Stripe Checkout (org's account) ──▶ org's bank
+              │                        │
+              │ writes donation        │ signed webhook
+              │ status = pending       ▼
+              └──────────────▶ /api/webhooks/stripe ──▶ status = succeeded
+                                                        receipt emailed
+```
+
+1. The donate form POSTs to `/api/checkout`. The server validates, computes
+   every amount itself, encrypts the donor's name/email/note, writes a
+   `pending` donation row, and creates a Checkout Session with the org's
+   **restricted** Stripe key. The donor is redirected to Stripe.
+2. Card details never touch this application (PCI SAQ-A).
+3. Stripe settles funds directly to the org. It then sends a webhook. Only a
+   signature-verified `checkout.session.completed` event can promote a
+   donation to `succeeded`, and only after the charged amount matches what
+   the server asked for. Nothing on the request path can mint a paid gift.
+4. Refunds are issued by the org in the **Stripe Dashboard**, never here — the
+   restricted key cannot do it. The webhook updates our records.
 
 | | Commercial platform | This |
 |---|---|---|
-| Platform fee | ~20% | $0 |
+| Platform fee | ~20% | **0%**, shown before checkout |
 | Suggested tip | ~15% | none |
-| Card processing | rolled into the 20% | 2.2% + $0.30 (501(c)(3) rate) |
-| ACH / bank transfer | — | 0.8%, capped at $5 |
-| **Net on $20,000 raised** | **~$16,000** | **~$19,400** |
-
-When a donor leaves the "cover processing" box checked, the team nets the full
-gift. Historically 80–90% of donors leave it checked, which puts the effective
-take-home near 100%.
-
-Infrastructure: domain ~$12/yr, Vercel hobby $0, Postgres $0–19/mo, Resend free
-to 3k emails/mo. Under $25/month.
+| Card processing | inside the 20% | Stripe's rate (2.9% + 30¢; 2.2% once approved for the nonprofit rate) |
+| Fee covered by donor | — | optional, pre-checked, clearly labelled |
+| Where money sits | platform, paid out later | org's own Stripe → org's bank |
 
 ---
 
-## Before you take a single dollar
+## Before you launch
 
-These are not technical problems, and they matter more than the code.
+These are not code problems, and they gate the launch.
 
-1. **The Stripe account must belong to the booster club, not a person.** If it is
-   in an individual's name, every donation is legally that person's income and
-   Stripe issues them a 1099-K for the gross. Open the Stripe account under the
-   501(c)(3)'s EIN and bank account.
-2. **Apply for Stripe's nonprofit rate** at [stripe.com/docs/nonprofit](https://stripe.com/docs/nonprofit).
-   Until it is approved you are billed the standard 2.9% + $0.30, and the
-   "cover the fee" math in `lib/money.ts` will under-collect by about 0.7%.
-   Keep `STRIPE_PERCENT` in sync with the rate you are actually charged.
-3. **Check with UNC Club Sports.** Many universities require donations for a club
-   team to route through a university gift account, and some prohibit outside
-   payment processors. Confirm the booster club is allowed to solicit independently
-   before launching.
-4. **North Carolina charitable solicitation license.** NC requires a license to
-   solicit contributions, filed with the Secretary of State. Some organizations are
-   exempt — confirm which applies to you.
-5. **Fill in the real org details** in `.env`. `NEXT_PUBLIC_ORG_LEGAL_NAME`,
-   `NEXT_PUBLIC_ORG_EIN` and `NEXT_PUBLIC_ORG_ADDRESS` print on every receipt.
-   IRS Pub. 1771 requires the organization name, the amount, and a statement about
-   goods or services — the receipt template handles the last part.
+1. **The org creates the Stripe key, not you.** In the org's Stripe Dashboard →
+   Developers → API keys → *Create restricted key* with exactly:
+   **Checkout Sessions: Write** and **Payment Intents: Read**. Nothing else.
+   The app refuses an unrestricted `sk_` key in every environment and refuses
+   a test key in production. Verify the permission set using Stripe's own
+   procedure: run the flow in a sandbox with the RAK and read the key's
+   request logs for 403s.
+2. **The org creates the webhook endpoint** pointing at
+   `https://<your-domain>/api/webhooks/stripe` with events
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `charge.refunded`,
+   `charge.dispute.created`, and hands you the signing secret.
+3. **Apply for Stripe's nonprofit rate.** Until approved, leave
+   `NEXT_PUBLIC_STRIPE_FEE_PERCENT=2.9`. The default over-collects slightly
+   rather than under-collecting the org.
+4. **Confirm the org can solicit.** North Carolina requires a charitable
+   solicitation license unless exempt. If the org is a university club or
+   program, confirm with the university that independent solicitation is
+   allowed.
+5. **Enter the org's legal name, EIN and postal address** at `/admin/settings`.
+   Receipts print them (IRS Pub. 1771), and **no outreach email can be sent
+   until the address is on file** (CAN-SPAM).
+6. **Verify the sending domain in Resend** and publish SPF, DKIM and DMARC.
+   Without them receipts and invites land in spam and the domain's reputation
+   is at risk from day one.
 
 ---
 
-## Local setup
+## Local development
 
-Requires Node 20.12+ (uses `process.loadEnvFile`).
+Requires Node 20.12+.
 
 ```bash
 npm install
 cp .env.example .env.local
+npm run keys:generate        # paste the three PII_* lines into .env.local
 ```
 
-Start the bundled development database — Postgres compiled to WASM, no Docker and
-no install:
+**Clerk keys are required to run the app**, even locally — there is no
+password fallback by design. Create a free Clerk application, copy its
+publishable and secret keys into `.env.local`, and add your own email to
+`BOOTSTRAP_ADMIN_EMAILS`.
+
+Start the bundled Postgres (WASM, no Docker), then the app:
 
 ```bash
-npm run db:dev        # listens on 127.0.0.1:5433, data persists in .devdb/
-```
-
-Then in a second terminal:
-
-```bash
-npm run db:seed -- you@unc.edu    # creates a campaign and makes you the coach
+npm run db:dev               # 127.0.0.1:5433, data persists in .devdb/
+npm run db:seed              # creates the organization row
 npm run dev
 ```
 
-Open http://localhost:3000 and sign in at `/login` with the email you seeded.
-With no `RESEND_API_KEY` configured, **magic links are printed to the dev server
-console** instead of emailed — copy the URL from the terminal.
+Sign in at `/sign-in`. The bootstrap email becomes org owner on first sign-in
+(audited), then `/admin` lets you create a campaign.
 
-> The dev database accepts **one connection at a time**. The Next.js dev server
-> holds it, so a separate script that queries the database will fail while `npm run
-> dev` is running. Stop one to use the other, or point `DATABASE_URL` at a real
-> Postgres. This limitation applies only to `npm run db:dev`.
+> The dev database accepts **one connection at a time**. Stop `npm run dev`
+> before running another script against it, or point `DATABASE_URL` at a real
+> Postgres (Neon and Supabase both have free tiers). This applies only to
+> `npm run db:dev`.
 
-### Using a real Postgres instead
+Without `RESEND_API_KEY`, every email is printed to the dev server console
+instead of sent. Without Upstash credentials, rate limits are in-memory
+(development only; production refuses to start). Without
+`BLOB_READ_WRITE_TOKEN`, photo uploads fail closed with a clear message.
 
-Any Postgres works — [Neon](https://neon.tech) and [Supabase](https://supabase.com)
-both have usable free tiers. Set `DATABASE_URL` to the **pooled** connection string,
-then `npm run db:push` to create the tables.
-
-## Testing payments
+### Testing payments locally
 
 ```bash
 stripe listen --forward-to localhost:3000/api/webhooks/stripe
 ```
 
-Copy the `whsec_...` it prints into `STRIPE_WEBHOOK_SECRET`, then donate with test
-card `4242 4242 4242 4242`, any future expiry, any CVC. The donation stays `pending`
-until the webhook confirms it, which is what promotes it to `succeeded` and sends
-the receipt.
+Put the printed `whsec_…` in `STRIPE_WEBHOOK_SECRET`. Donate with test card
+`4242 4242 4242 4242`. The donation stays `pending` until the forwarded
+webhook arrives, which is what promotes it and sends the receipt.
 
-## Commands
+### Commands
 
 | | |
 |---|---|
-| `npm run dev` | development server |
+| `npm run dev` / `build` / `start` | Next.js |
 | `npm run db:dev` | bundled WASM Postgres on :5433 |
-| `npm run db:seed -- email` | create a campaign, make that email the coach |
-| `npm run db:generate` | generate a migration after editing the schema |
-| `npm run db:push` | apply the schema to the database |
-| `npm run db:studio` | browse the data |
-| `npm run verify` | full test suite against in-process Postgres |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint |
+| `npm run db:seed` | create the organization row |
+| `npm run db:generate` / `db:push` | migrations |
+| `npm run keys:generate` | fresh PII encryption + index keys |
+| `npm run verify` | 248-check suite against in-process Postgres |
+| `npm run typecheck` / `lint` | |
 
 ---
 
-## How it works
+## Environment variables
 
-### Outreach: players send their own messages
+Everything lives in env / your host's secret manager. Nothing is committed.
+`.env.example` documents every key; the important groupings:
 
-Commercial platforms bulk-send texts from their own infrastructure. Doing that
-yourself requires A2P 10DLC carrier registration through Twilio — an EIN, one to
-three weeks of review, per-message cost, and ongoing carrier filtering that
-silently drops traffic.
+| Group | Keys | Notes |
+|---|---|---|
+| Database | `DATABASE_URL` | Connect as the `app` role from `scripts/grants.sql`, never as owner |
+| Clerk | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET`, `BOOTSTRAP_ADMIN_EMAILS` | |
+| Stripe | `STRIPE_SECRET_KEY` (**rk_**), `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_FEE_PERCENT`, `NEXT_PUBLIC_STRIPE_FEE_FIXED_CENTS` | Org-issued restricted key |
+| PII encryption | `PII_ENCRYPTION_KEYS`, `PII_ENCRYPTION_ACTIVE_KEY_ID`, `PII_INDEX_KEY` | Keep the index key in a different scope from `DATABASE_URL` |
+| Rate limiting | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Required in production |
+| Email | `RESEND_API_KEY`, `EMAIL_FROM`, `RESEND_WEBHOOK_SECRET` | |
+| Uploads | `BLOB_READ_WRITE_TOKEN` | Vercel Blob |
+| Bot protection | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Optional; activates when set |
+| Deploy env | `VERCEL_ENV` (auto) or `APP_ENV=production` | Gates live-key enforcement |
 
-This skips all of it. A player adds contacts, and the app builds a prefilled
-`sms:` or `mailto:` link containing their personal tracked URL. Tapping it opens
-the player's **own** Messages or Mail app with the note already written. The message
-arrives from a number the recipient recognizes, which converts far better than a
-shortcode blast, costs nothing, and carries no carrier compliance burden.
+---
 
-Tracking still works, because the link is unique per contact.
+## Architecture
 
-### Attribution
+Next.js 16 App Router · TypeScript · Postgres + Drizzle · Clerk · Stripe
+Checkout · Resend · Upstash · Vercel Blob · Tailwind 4.
 
-Every share link is a short code at `/r/<code>`. Visiting it records the click and
-forwards to `/p/<player>?ref=<code>`. The donate form passes `ref` through checkout,
-so a gift is traceable to the individual contact who was messaged. A gift with no
-`ref` falls back to the player page it came from; one given straight from the team
-page is credited to the team.
+### Routes
 
-### Money
+| Path | Who | What |
+|---|---|---|
+| `/` | public | active campaigns |
+| `/c/[campaign]` | public | campaign page, live thermometer, leaderboard, donor wall, donate form |
+| `/c/[campaign]/[participant]` | public | participant page with attribution (`?ref=`) |
+| `/r/[code]` | public | tracked short link → participant page |
+| `/qr/[code]` | public | SVG QR for a share link |
+| `/thanks` | public | post-checkout confirmation |
+| `/unsubscribe/[token]`, `POST /api/unsubscribe/[token]` | public | human and RFC 8058 one-click unsubscribe |
+| `/api/checkout` | public, rate-limited | creates the Stripe session |
+| `/api/campaigns/[id]/stats`, `/api/participants/[id]/stats` | public, cached | PII-free live numbers |
+| `/api/webhooks/stripe` `clerk` `resend` | signed | idempotent event ingestion |
+| `/dashboard` | signed in | role router + join by code |
+| `/dashboard/[participantId]` | owner only | console: link, QR, contacts, supporters, profile |
+| `/join/[token]` | signed in | accept an admin invite (explicit POST) |
+| `/admin`, `/admin/campaigns/*`, `/admin/settings`, `/admin/audit` | org admin | management |
+| `/api/admin/campaigns/[id]/export` | org admin, audited | donor CSV |
 
-`lib/money.ts` is the single source of truth. `grossUpForFees(net)` returns the
-charge that leaves the team with exactly `net` after Stripe takes its cut — for a
-$100 gift at the nonprofit rate that is $102.56, not $102.55, which would leave the
-team a cent short. The test suite asserts no shortfall across the full range of
-amounts.
+### Authorization model
 
-Donation rows are written as `pending` before redirecting to Stripe and only become
-`succeeded` when the webhook confirms payment. Totals, leaderboards and the donor
-wall all filter on `succeeded`, so abandoned checkouts never appear anywhere public.
+Two kinds of authority, both derived from the Clerk session, never from a
+client-supplied id:
 
-### Security
+- **Org membership** (`memberships.role` = owner/admin) authorizes campaign
+  and roster management, settings, exports and the audit log.
+- **Participant ownership** (`participants.user_id` = session user)
+  authorizes profile edits, contacts and outreach for that one row.
 
-- Card details never touch the server — Stripe Checkout keeps this at PCI SAQ-A.
-- Sign-in is passwordless. Tokens are single-use, expire in 15 minutes, and only
-  the SHA-256 hash is stored.
-- **Login cannot create accounts.** Links are only issued to emails already on the
-  roster, so the coach's roster is the access list.
-- The sign-in form returns an identical response for any email, including when
-  delivery fails, so it cannot be used to enumerate who is on the team.
-- Sessions are signed JWTs in an `HttpOnly`, `SameSite=Lax` cookie.
-- The donor CSV is admin-only and served `no-store` — it contains email addresses.
-- Anonymous donors are hidden on the public wall but preserved in the admin export,
-  so the treasurer can still write a thank-you note.
-- The donate endpoint is rate limited per IP against card testing.
+Every Server Action and route handler calls a guard in `lib/authz.ts` first.
+Where a client sends an id, it is a lookup hint; the `WHERE` clause carries the
+session-derived owner. `proxy.ts` handles sessions and headers only — Next.js
+16 and Clerk both document that route protection must live beside the data,
+because Server Actions are POSTs to their page route and can slip past a
+matcher.
 
-The rate limiter is in-process memory: it does not survive a redeploy and is
-per-instance. Once you are live, also turn on **Stripe Radar** and put **Cloudflare**
-in front of the domain. Setting `TURNSTILE_SECRET_KEY` and
-`NEXT_PUBLIC_TURNSTILE_SITE_KEY` activates captcha verification on checkout; without
-them that check is skipped.
+### Encryption model
+
+`lib/crypto.ts`. Column-level AES-256-GCM for every piece of third-party PII:
+donor name, email and note; every imported contact; invite emails. The column
+identity is bound as GCM additional authenticated data, so a ciphertext moved
+between columns fails to decrypt. Envelopes carry a key id, so rotation is a
+new key plus a background re-encrypt.
+
+Equality lookups (dedupe, suppression, invite matching) use HMAC-SHA256
+**blind indexes** under a separate key. Participant and admin emails on
+`users` stay plaintext: they are identity, the auth layer queries by them, and
+they are not donor data.
+
+Decryption happens in exactly four places: the public donor wall (name and
+note, name withheld for anonymous gifts), the owner's own contact list, the
+receipt sender, and `lib/queries/admin-donations.ts` — which is admin-only and
+audited on every read.
+
+### Outreach pipeline
+
+`lib/outreach.ts` is the only code that emails an imported contact. Every gate
+is inside it: contact belongs to the sender · has an email · not unsubscribed
+· not on the org-wide suppression list · not mailed in the last 7 days · at
+most 25 per send · 100 per participant per day · list capped at 100 · org
+postal address on file. Every message carries the org's address, a signed
+unsubscribe link and a `List-Unsubscribe-Post` header. Bounces and complaints
+arrive via the Resend webhook and suppress the address org-wide.
+
+SMS is never sent by the platform. "Text" mints a per-contact tracked link and
+opens the participant's own Messages app. No A2P 10DLC, no TCPA sender
+obligations.
+
+---
+
+## Security posture
+
+Mapped to the requirements this was built against.
+
+| Requirement | Implementation |
+|---|---|
+| Managed auth, no homegrown passwords | Clerk (`proxy.ts`, `lib/authz.ts`). Auth.js v5 was rejected because it has never left beta. |
+| Ownership check on every write | `lib/authz.ts` guards; session-scoped `WHERE` on every mutation |
+| Server-side validation | Zod on every action and route (`lib/checkout-schema.ts`, action files) |
+| Rate limiting | Upstash sliding windows per IP / user / participant (`lib/ratelimit.ts`); production fails closed without Redis |
+| PII encrypted at rest | AES-256-GCM + AAD + blind indexes (`lib/crypto.ts`); IPs stored only as monthly-rotating HMACs |
+| Never log PII | Action wrapper logs error messages only; audit writer rejects PII-shaped keys at runtime; webhook payloads are never stored |
+| CSRF | Server Actions (Next.js origin check); the only unauthenticated POSTs are checkout (Turnstile + rate limit) and signed webhooks |
+| HTTPS, secure cookies, headers | Clerk strict nonce CSP, HSTS preload, `frame-ancestors 'none'`, nosniff, referrer and permissions policies (`proxy.ts`) |
+| Verified webhooks | Stripe `constructEvent`, Clerk `verifyWebhook`, Resend via Svix; all three keyed on a replay ledger |
+| Secrets in env only | `.env.example` is placeholders; the commit hook scans staged diffs for key shapes |
+| Audit log | Append-only (`scripts/grants.sql` revokes UPDATE/DELETE); covers admin writes, exports and donor-PII views; viewer at `/admin/audit` |
+| Restricted Stripe key | `lib/stripe.ts` refuses `sk_` everywhere and test keys in production |
+| Attribution only | No payout code exists. Funds settle to the org directly. |
+
+---
+
+## What a reviewer should know
+
+Deliberate choices and honest limits, in the order I would want to be asked
+about them.
+
+1. **Blind indexes leak equality.** Anyone holding both the database and
+   `PII_INDEX_KEY` can confirm a *guessed* email. Keep the index key out of
+   the scope that holds `DATABASE_URL`. There is no equality lookup without
+   this tradeoff short of searchable encryption, which is not warranted here.
+2. **Keys are in environment variables, not KMS.** On Vercel that is
+   encrypted at rest and exposed only to the runtime. The upgrade is a
+   `KmsKeyProvider` behind the existing `KeyProvider` interface: IAM-scoped
+   decrypt with its own audit trail. Nothing else changes.
+3. **Participants do not see donor emails.** They see name, amount, date and
+   note — enough to say thank you. Reversing this is a one-line change in
+   `listDonorsForParticipant`, but it multiplies the breach surface by the
+   roster size. Admins see emails, audited.
+4. **Anonymous donors are anonymous to the participant too.** The admin
+   export shows the real name so the org can send its own acknowledgment.
+5. **Partially refunded gifts drop from public totals.** Conservative: totals
+   never overstate. The refunded amount is recorded for reconciliation.
+6. **The webhook trusts Stripe's `amount_total`** and cross-checks it against
+   the server-computed pending row. A mismatch marks the donation failed. It
+   does not trust the client's arithmetic at any point.
+7. **`img-src` allows the Vercel Blob store and Clerk's CDN only.** Uploads
+   are validated by magic bytes; SVG is refused because it can carry script.
+8. **The dev rate limiter is in-memory and announces itself.** Production
+   throws at first use without Upstash. There is no silent degradation.
+9. **Turnstile is optional.** It activates when both keys are set. Turn it on
+   before going live; public donate forms attract card-testing bots, and
+   Stripe Radar should be enabled on the org's account as well.
+10. **Clerk's keyless dev mode is not used.** The app requires real Clerk keys
+    so no third-party resource is created implicitly.
+11. **The contact cap (100), batch (25), daily send (100) and cooldown (7 d)**
+    are constants in `lib/outreach.ts`, agreed before build.
+12. **Emails HTML-escape every interpolated string** (`lib/html.ts`). The
+    receipt, invite and outreach templates were reviewed for this.
 
 ---
 
 ## Deploying
 
-1. Push to GitHub, import the repo in Vercel.
-2. Set every variable from `.env.example` in Vercel's environment settings.
-   `SESSION_SECRET` should be a fresh `openssl rand -base64 32` — not the dev one.
-3. Point `DATABASE_URL` at the pooled connection string and run `npm run db:push`.
-4. Add the production webhook in Stripe → Developers → Webhooks:
-   `https://yourdomain.org/api/webhooks/stripe`, subscribed to
-   `checkout.session.completed` and `charge.refunded`. Put its signing secret in
-   `STRIPE_WEBHOOK_SECRET`.
-5. Verify your sending domain in Resend and set the SPF and DKIM records, or
-   receipts will land in spam.
-6. Set `NEXT_PUBLIC_SITE_URL` to the real domain — share links are built from it.
-7. Switch Stripe from test keys to live keys last, and make one real $1 donation
-   to yourself end to end before sending anything to the team.
+Target: Vercel. Any Node 20 host works with `APP_ENV=production`.
 
-## Running a campaign
+1. Import the repo. Set every variable from `.env.example`. Generate
+   **fresh** PII keys for production — never reuse development keys.
+2. Provision Postgres (Neon/Supabase pooled URL). Run `npm run db:push`, then
+   as the owner run `scripts/grants.sql` to create the least-privilege `app`
+   role, and point `DATABASE_URL` at it.
+3. Provision Upstash Redis and Vercel Blob; connect both to the project.
+4. Clerk: production instance, set the webhook to `/api/webhooks/clerk`
+   (`user.created`, `user.updated`, `user.deleted`), copy the signing secret.
+5. Stripe: the **org** creates the restricted key and the webhook endpoint
+   (see *Before you launch*), and hands you both secrets.
+6. Resend: verify the domain; webhook to `/api/webhooks/resend`
+   (`email.delivered`, `email.bounced`, `email.complained`).
+7. Set `NEXT_PUBLIC_SITE_URL` to the real domain. Share links and QR codes
+   are built from it.
+8. Enable Turnstile. Enable Stripe Radar on the org's account.
+9. Make one real $5 donation end to end and confirm the receipt, the audit
+   row, and the settlement in the org's Stripe balance — before inviting a
+   single participant.
 
-The dashboard's roster table is the thing to watch. **Contacts loaded but zero
-messages sent** is the number to chase — that player is one nudge away from their
-entire total. Players who send 20+ messages raise roughly three times as much as
-those who send five.
+---
 
-Two things move the number more than anything technical:
+## Operations
 
-- **Specific, itemized goals.** "Ice time is $340 an hour and we need 60 hours"
-  outperforms "support our program."
-- **The players' own stories, in their own words.** A generic team page raises a
-  fraction of what personal pages do.
+- **Rotate PII keys:** add a new id to `PII_ENCRYPTION_KEYS`, point
+  `PII_ENCRYPTION_ACTIVE_KEY_ID` at it, deploy, re-encrypt in the background,
+  then remove the old id. Never delete a key still referenced by a row.
+- **Refunds and disputes:** handled in the org's Stripe Dashboard. The webhook
+  updates our status and totals.
+- **Remove a participant:** `/admin/campaigns/[id]` → Remove. Their page goes
+  offline; attributed donations stay in the totals.
+- **Revoke an admin:** remove the Clerk user or delete the `memberships` row.
+- **Someone asks to stop receiving email:** the link in every message does
+  it org-wide; or add a `suppressions` row by blind index.
+- **Rotate a join code** once the roster is set.
 
-## Stack
+---
 
-Next.js 16 (App Router) · TypeScript · Postgres + Drizzle · Stripe Checkout ·
-Resend · Tailwind 4
+## Testing
+
+`npm run verify` runs 248 checks against an in-process Postgres with
+ephemeral keys and no network. It covers: the encryption envelope, AAD and
+rotation; blind-index normalization; IP hashing; the audit PII guard; rate
+limiter semantics including batch cost; every schema constraint; campaign,
+participant and donation queries including draft visibility and status
+filtering; upload sniffing; click-privacy guarantees; CSV import parsing;
+unsubscribe tokens; the full outreach gate set; the Stripe webhook state
+machine (paid, ACH-delayed, mismatch, partial/full refund, dispute, replay);
+donor-wall anonymity; CSV export formula neutralization; admin financials;
+and the audit trail.
+
+It does **not** exercise Clerk-gated pages (requires live Clerk keys) or
+live Stripe/Resend calls. Those are verified by the end-to-end donation in
+the deploy checklist.
+
+---
 
 ## Known limitations
 
 - `npm audit` reports moderate advisories in `drizzle-kit`'s dev-only esbuild
-  dependency. It does not ship in the production bundle. Fixing it requires
-  downgrading drizzle-kit to 0.18, which is not worth it.
-- A partial refund marks the whole donation `refunded` and removes it from totals.
-  The treasurer reconciles the difference in Stripe.
-- Player photos are pasted URLs; there is no upload. Add a storage bucket if you
-  want real uploads.
+  dependency. It does not ship in the production bundle.
+- No admin UI for creating a second organization; v1 is single-org by seed.
+  The schema supports more.
+- No receipt re-send button; a failed receipt is logged and can be re-sent by
+  hand from the audit trail and Stripe record.
+- Photo uploads require Vercel Blob; there is no alternate storage adapter.
