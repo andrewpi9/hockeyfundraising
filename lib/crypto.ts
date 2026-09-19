@@ -108,6 +108,8 @@ export const CTX = {
   contactEmail: "contacts.email",
   contactPhone: "contacts.phone",
   inviteEmail: "participant_invites.email",
+  helperName: "participant_helpers.name",
+  helperEmail: "participant_helpers.email",
 } as const;
 export type EncryptionContext = (typeof CTX)[keyof typeof CTX];
 

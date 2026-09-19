@@ -19,8 +19,12 @@ export type AuditAction =
   | "participant.update_by_admin"
   | "contacts.import"
   | "donation.export"
+  | "donation.reassign"
+  | "participant.nudge"
   | "donation.view_pii"
-  | "suppression.add";
+  | "suppression.add"
+  | "helper.add"
+  | "helper.kit_sent";
 
 export type AuditMetadata = Record<string, string | number | boolean | null>;
 

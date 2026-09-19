@@ -142,3 +142,26 @@ export async function listRoster(campaignId: string) {
     .where(and(eq(participants.campaignId, campaignId), eq(participants.status, "active")))
     .orderBy(desc(participantTotals.raisedCents), participants.displayName);
 }
+
+/**
+ * Active, claimed participants who have not sent a single message or copied
+ * their link — the people one reminder away from their whole total.
+ * Emails here are identity (users.email), so an admin may write to them.
+ */
+export async function listQuietParticipants(campaignId: string) {
+  return db
+    .select({ participantId: participants.id, displayName: participants.displayName, email: users.email, name: users.name })
+    .from(participants)
+    .innerJoin(users, eq(participants.userId, users.id))
+    .where(
+      and(
+        eq(participants.campaignId, campaignId),
+        eq(participants.status, "active"),
+        eq(users.isPlaceholder, false),
+        isNull(users.deletedAt),
+        sql`not exists (select 1 from outreach_events o where o.participant_id = ${participants.id})`,
+        sql`not exists (select 1 from email_invites e where e.participant_id = ${participants.id})`,
+      ),
+    )
+    .orderBy(participants.displayName);
+}

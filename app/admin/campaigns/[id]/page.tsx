@@ -12,6 +12,8 @@ import { Financials } from "@/components/admin/Financials";
 import { RecentDonations } from "@/components/admin/RecentDonations";
 import { card, buttonStyles } from "@/components/ui";
 import { getCampaignFinancials } from "@/lib/queries/admin-donations";
+import { listRoster, listQuietParticipants } from "@/lib/queries/participants";
+import { NudgeButton } from "@/components/admin/RosterControls";
 import { toDateInput } from "@/lib/actions";
 import { siteUrl } from "@/lib/site";
 
@@ -26,7 +28,8 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
   if (!campaign || campaign.orgId !== org.id) notFound();
 
   const publicUrl = siteUrl(`/c/${campaign.slug}`);
-  const financials = await getCampaignFinancials(campaign.id);
+  const [financials, rosterRows, quiet] = await Promise.all([getCampaignFinancials(campaign.id), listRoster(campaign.id), listQuietParticipants(campaign.id)]);
+  const rosterOptions = rosterRows.map((r) => ({ id: r.participant.id, displayName: r.participant.displayName }));
 
   return (
     <AdminShell
@@ -62,8 +65,8 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
                 Export CSV
               </a>
             </div>
-            <RecentDonations campaignId={campaign.id} orgId={org.id} actorUserId={user.id} />
-            <p className="mt-2 text-xs text-muted">Viewing or exporting donor details is recorded in the audit log.</p>
+            <RecentDonations campaignId={campaign.id} orgId={org.id} actorUserId={user.id} roster={rosterOptions} />
+            <p className="mt-2 text-xs text-muted">Viewing or exporting donor details is recorded in the audit log. Changing who a gift is credited to is audited too.</p>
           </section>
 
           <section className={`${card} p-5`}>
@@ -84,7 +87,10 @@ export default async function CampaignAdminPage({ params }: { params: Promise<{ 
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-bold">Roster</h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-bold">Roster</h2>
+              <NudgeButton campaignId={campaign.id} quietCount={quiet.length} />
+            </div>
             <Roster campaignId={campaign.id} campaignSlug={campaign.slug} />
           </section>
         </div>

@@ -7,7 +7,7 @@ export async function Supporters({ participantId }: { participantId: string }) {
   const donors = await listDonorsForParticipant(participantId);
   return (
     <section>
-      <h2 className="mb-3 text-lg font-bold">Your supporters</h2>
+      <h2 className="mb-3 font-display text-2xl font-bold uppercase">Your supporters</h2>
       {donors.length === 0 ? (
         <p className="text-sm text-muted">Nobody yet. Share your link — the first gift usually comes from someone who already knows you.</p>
       ) : (

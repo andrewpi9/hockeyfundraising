@@ -1,11 +1,35 @@
 "use client";
 
 import { useActionState, useMemo, useState, useTransition } from "react";
-import { importContacts, addContact, deleteContact, sendInvites, prepareSms } from "@/app/dashboard/actions";
+import { importContacts, pasteContacts, addContact, deleteContact, sendInvites, prepareSms } from "@/app/dashboard/actions";
 import { Button, Field, inputStyles } from "@/components/ui";
 import { Notice } from "@/components/admin/CampaignForm";
 
 import type { ContactRow } from "@/lib/queries/contacts";
+
+export function PasteForm({ participantId }: { participantId: string }) {
+  const [state, action, pending] = useActionState(pasteContacts, null);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="participantId" value={participantId} />
+      <Field label="Paste your people" hint="One per line — name, email, phone, in any order. Copy straight out of your phone's contacts or a spreadsheet.">
+        <textarea
+          name="pasted"
+          rows={6}
+          required
+          placeholder={"Aunt Sarah, sarah@example.com, 919-555-0199\nCoach Miller, miller@example.com\nGrandpa Joe, 704-555-0142"}
+          className={`${inputStyles} resize-y font-mono text-sm`}
+        />
+      </Field>
+      <label className="flex cursor-pointer items-start gap-3 text-sm">
+        <input type="checkbox" name="attest" required className="mt-0.5 size-4 accent-carolina-500" />
+        <span>These are people who know me personally — family, friends, teachers, coaches. Not a purchased or scraped list.</span>
+      </label>
+      <Notice state={state} />
+      <Button type="submit" disabled={pending}>{pending ? "Adding…" : "Add these contacts"}</Button>
+    </form>
+  );
+}
 
 export function ImportForm({ participantId }: { participantId: string }) {
   const [state, action, pending] = useActionState(importContacts, null);

@@ -180,7 +180,8 @@ export async function removePhoto(formData: FormData): Promise<ActionState> {
 
 // ---------------------------------------------------------------- contacts (phase 3)
 
-import { contacts, contactImports, outreachEvents, organizations } from "@/lib/db/schema";
+import { contacts, contactImports, outreachEvents, organizations, participantHelpers } from "@/lib/db/schema";
+import { createHelper, sendKit, HelperError } from "@/lib/helpers";
 import { encryptField, encryptOptional, decryptOptional, CTX } from "@/lib/crypto";
 import { parseContactsCsv, MAX_CSV_BYTES, type ParsedContact } from "@/lib/csv";
 import { countContacts, existingContactIndexes } from "@/lib/queries/contacts";
@@ -363,4 +364,104 @@ export async function recordCopy(formData: FormData): Promise<void> {
   } catch {
     // analytics only
   }
+}
+
+// ---------------------------------------------------------------- contacts: paste a list
+
+/** Same parser as CSV — "Name, email, phone" per line in any order — but from a textarea, which is what works on a phone. */
+export async function pasteContacts(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+    if (!(await limiters.contactImport.limit(participant.id)).success) return { ok: false, message: "Too many imports this hour. Try again later." };
+    if (!checkbox(formData.get("attest"))) return { ok: false, message: "Please confirm these are your own contacts." };
+
+    const pasted = z.string().max(MAX_CSV_BYTES, "That's too much at once — paste fewer lines.").parse(formData.get("pasted") ?? "");
+    if (!pasted.trim()) return { ok: false, message: "Paste at least one line: name, email, phone." };
+
+    const result = parseContactsCsv(pasted);
+    const { inserted, duplicates, overCap } = await insertContacts(participant.id, result.contacts, "manual");
+    await db.insert(contactImports).values({
+      participantId: participant.id,
+      originalFilename: null,
+      byteSize: pasted.length,
+      rowCount: result.rowCount,
+      importedCount: inserted,
+      skippedCount: result.skipped + duplicates + overCap,
+      attestedConsent: true,
+      errorSummary: result.errors.join(" ") || null,
+    });
+
+    revalidatePath(`/dashboard/${participant.id}`);
+    const notes: string[] = [];
+    if (duplicates) notes.push(`${duplicates} already on your list`);
+    if (result.skipped) notes.push(`${result.skipped} lines had no usable name, email or phone`);
+    if (overCap) notes.push(`${overCap} not added — the list holds ${CONTACT_CAP}`);
+    return { ok: inserted > 0, message: inserted > 0 ? `Added ${inserted} contact${inserted === 1 ? "" : "s"}.${notes.length ? ` (${notes.join("; ")}.)` : ""}` : `Nothing added. ${notes.join("; ") || "Each line needs a name plus an email or phone."}` };
+  });
+}
+
+// ---------------------------------------------------------------- family helpers
+
+async function helperContext(participantId: string) {
+  const { user, participant } = await requireParticipantOwner(participantId);
+  const [campaign] = await db.select().from(campaigns).where(eq(campaigns.id, participant.campaignId)).limit(1);
+  if (!campaign) throw new Error("Campaign not found.");
+  const [org] = await db.select().from(organizations).where(eq(organizations.id, campaign.orgId)).limit(1);
+  if (!org) throw new Error("Organization not found.");
+  return { user, participant, campaign, org };
+}
+
+const HelperInput = z.object({
+  participantId: z.string().uuid(),
+  name: z.string().trim().min(1, "Their name is required").max(80),
+  email: z.email("Enter a valid email").max(200),
+  relationship: z.string().trim().max(40).optional(),
+});
+
+export async function addHelper(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const input = HelperInput.parse(Object.fromEntries(formData));
+    const ctx = await helperContext(input.participantId);
+    if (!(await limiters.mutation.limit(`helper:${ctx.participant.id}`)).success) return { ok: false, message: "Slow down a little." };
+    if (ctx.campaign.status !== "active") return { ok: false, message: "Helpers can be added once the campaign is live." };
+    try {
+      const { kitSent } = await createHelper(ctx, { name: input.name, email: input.email, relationship: input.relationship ?? null });
+      revalidatePath(`/dashboard/${ctx.participant.id}`);
+      return { ok: true, message: kitSent ? `${input.name.split(" ")[0]} is in. Their share kit is on its way.` : `${input.name.split(" ")[0]} is in, but the kit email failed — try "Resend kit" in a minute.` };
+    } catch (err) {
+      if (err instanceof HelperError) return { ok: false, message: err.message };
+      throw err;
+    }
+  });
+}
+
+export async function resendHelperKit(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const helperId = z.string().uuid().parse(formData.get("helperId"));
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const ctx = await helperContext(participantId);
+    // Scoped by owner: a foreign helper id finds nothing.
+    const [helper] = await db.select().from(participantHelpers).where(and(eq(participantHelpers.id, helperId), eq(participantHelpers.participantId, ctx.participant.id))).limit(1);
+    if (!helper) return { ok: false, message: "Helper not found." };
+    try {
+      await sendKit(ctx, helper);
+      revalidatePath(`/dashboard/${ctx.participant.id}`);
+      return { ok: true, message: "Kit re-sent." };
+    } catch (err) {
+      if (err instanceof HelperError) return { ok: false, message: err.message };
+      throw err;
+    }
+  });
+}
+
+export async function removeHelper(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const helperId = z.string().uuid().parse(formData.get("helperId"));
+    const participantId = z.string().uuid().parse(formData.get("participantId"));
+    const { participant } = await requireParticipantOwner(participantId);
+    await db.delete(participantHelpers).where(and(eq(participantHelpers.id, helperId), eq(participantHelpers.participantId, participant.id)));
+    revalidatePath(`/dashboard/${participant.id}`);
+    return { ok: true, message: "Removed." };
+  });
 }

@@ -2,6 +2,7 @@ import { card } from "@/components/ui";
 import { formatMoney } from "@/lib/money";
 import { listDonationsForAdmin } from "@/lib/queries/admin-donations";
 import { audit } from "@/lib/audit";
+import { ReassignSelect } from "./RosterControls";
 
 const STATUS_TONE: Record<string, string> = {
   succeeded: "text-emerald-700 dark:text-emerald-300",
@@ -16,7 +17,7 @@ const STATUS_TONE: Record<string, string> = {
  * Renders donor names and emails to a campaign admin. That is a PII read, so
  * each render is audited with the row count — the agreed scope.
  */
-export async function RecentDonations({ campaignId, orgId, actorUserId }: { campaignId: string; orgId: string; actorUserId: string }) {
+export async function RecentDonations({ campaignId, orgId, actorUserId, roster }: { campaignId: string; orgId: string; actorUserId: string; roster: { id: string; displayName: string }[] }) {
   const rows = await listDonationsForAdmin(campaignId, 50);
   if (rows.length > 0) {
     await audit({ action: "donation.view_pii", targetType: "campaign", targetId: campaignId, orgId, actorUserId, metadata: { row_count: rows.length, view: "recent_donations" } });
@@ -34,7 +35,7 @@ export async function RecentDonations({ campaignId, orgId, actorUserId }: { camp
             <th className="px-4 py-3 text-right font-medium">Gift</th>
             <th className="px-4 py-3 text-right font-medium">Charged</th>
             <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">For</th>
+            <th className="px-4 py-3 font-medium">Credited to</th>
             <th className="px-4 py-3 font-medium">Via</th>
           </tr>
         </thead>
@@ -50,7 +51,7 @@ export async function RecentDonations({ campaignId, orgId, actorUserId }: { camp
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{formatMoney(r.designatedCents)}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-muted">{formatMoney(r.grossCents)}{r.refundedCents ? <div className="text-xs">−{formatMoney(r.refundedCents)}</div> : null}</td>
               <td className={`px-4 py-2.5 text-xs font-semibold uppercase ${STATUS_TONE[r.status] ?? ""}`}>{r.status.replace("_", " ")}</td>
-              <td className="px-4 py-2.5">{r.participantName ?? <span className="text-muted">team</span>}</td>
+              <td className="px-4 py-2.5"><ReassignSelect donationId={r.id} current={r.participantId} roster={roster} /></td>
               <td className="px-4 py-2.5 text-xs text-muted">{r.source === "import" ? "imported" : (r.medium ?? "page")}</td>
             </tr>
           ))}

@@ -175,3 +175,91 @@ Receipt ID: ${args.donationId}`;
     ),
   });
 }
+
+// ---------------------------------------------------------------- participant nudge (admin → athlete)
+
+/** Sent to a participant's OWN account address, never to donors or contacts. */
+export async function sendParticipantNudge(args: { to: string; firstName: string; campaignName: string; coachName: string | null; consoleUrl: string }) {
+  const from = args.coachName ? `${args.coachName}` : "your coach";
+  await send({
+    to: args.to,
+    subject: `${args.campaignName}: your page is ready — share it`,
+    text: `Hi ${args.firstName},
+
+You're on the roster for ${args.campaignName} but haven't shared your page yet. Players who send 20+ messages raise about three times as much as those who send five.
+
+Your page and share tools: ${args.consoleUrl}
+
+Text five people today. That's it.
+
+— ${from}`,
+    html: shell(
+      `<h1 style="margin:0 0 16px;font-size:20px">Your page is ready, ${esc(args.firstName)}</h1>
+       <p style="margin:0 0 16px;line-height:1.6">You're on the roster for <strong>${esc(args.campaignName)}</strong> but haven't shared your page yet. Players who send 20+ messages raise about three times as much as those who send five.</p>
+       ${button(args.consoleUrl, "Open my page")}
+       <p style="margin:24px 0 0;line-height:1.6">Text five people today. That's it.</p>
+       <p style="margin:16px 0 0;color:#78716c">— ${esc(from)}</p>`,
+    ),
+  });
+}
+
+// ---------------------------------------------------------------- family share kit (athlete → parent)
+
+/**
+ * One email to a family member the player named. It carries everything they
+ * need to spread the word from their OWN address book: the link, a note they
+ * can forward as-is, and the QR. We send this once (and on request); they do
+ * the rest, which is why it lands.
+ */
+export async function sendHelperKit(args: {
+  to: string;
+  helperFirstName: string;
+  playerName: string;
+  campaignName: string;
+  orgName: string;
+  orgAddress: string | null;
+  pageUrl: string;
+  qrUrl: string;
+  unsubscribeUrl: string;
+  oneClickUrl: string;
+}): Promise<string> {
+  const first = args.playerName.split(" ")[0] ?? args.playerName;
+  const forwardText = `${first} is playing for ${args.orgName} this season and the team is raising money for ice time, travel and gear. If you're able to chip in, anything helps — every dollar goes to the program and it's tax-deductible to the extent the law allows. Here's ${first}'s page: ${args.pageUrl}`;
+
+  const text = `Hi ${args.helperFirstName},
+
+${first} added you as a helper for ${args.campaignName}. The single biggest thing you can do is send ${first}'s page to people who know your family — relatives, coworkers, neighbors, old teammates' parents.
+
+${first}'s page: ${args.pageUrl}
+Printable QR code: ${args.qrUrl}
+
+Here's a note you can copy and send as-is:
+
+${forwardText}
+
+Thank you,
+${args.orgName}
+
+—
+${args.orgName}${args.orgAddress ? ` · ${args.orgAddress}` : ""}
+You're receiving this because ${first} added you as a helper. Unsubscribe: ${args.unsubscribeUrl}`;
+
+  return send({
+    to: args.to,
+    subject: `${first}'s fundraising page — here's how to help`,
+    text,
+    headers: { "List-Unsubscribe": `<${args.oneClickUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+    html: shell(
+      `<h1 style="margin:0 0 16px;font-size:20px">${esc(first)} added you as a helper</h1>
+       <p style="margin:0 0 20px;line-height:1.6">The single biggest thing you can do for <strong>${esc(args.campaignName)}</strong> is send ${esc(first)}'s page to people who know your family — relatives, coworkers, neighbors, old teammates' parents.</p>
+       ${button(args.pageUrl, `Open ${first}'s page`)}
+       <p style="margin:24px 0 8px;font-weight:600">Copy and forward this note:</p>
+       <blockquote style="margin:0 0 20px;padding:14px 16px;border-left:3px solid #4B9CD3;background:#f0f8fd;border-radius:8px;line-height:1.6;font-size:15px">${esc(forwardText)}</blockquote>
+       <p style="margin:0 0 8px;font-weight:600">Or share the QR code:</p>
+       <p style="margin:0 0 4px"><a href="${esc(args.qrUrl)}"><img src="${esc(args.qrUrl)}" alt="QR code for ${esc(first)}'s page" width="160" height="160" style="border:1px solid #e7e5e4;border-radius:8px;padding:6px;background:#fff"></a></p>
+       <p style="margin:0 0 24px;font-size:13px;color:#78716c">Prints well on a flyer or a fridge.</p>
+       <p style="margin:0;line-height:1.6">Thank you,<br>${esc(args.orgName)}</p>`,
+      `${esc(args.orgName)}${args.orgAddress ? ` · ${esc(args.orgAddress)}` : ""}<br>You're receiving this because ${esc(first)} added you as a helper. <a href="${esc(args.unsubscribeUrl)}" style="color:#78716c">Unsubscribe</a>`,
+    ),
+  });
+}

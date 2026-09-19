@@ -24,6 +24,7 @@ export type AdminDonationRow = {
   grossCents: number;
   refundedCents: number;
   paymentMethodType: string | null;
+  participantId: string | null;
   participantName: string | null;
   participantSlug: string | null;
   medium: string | null;
@@ -60,6 +61,7 @@ async function rows(campaignId: string, limit?: number): Promise<AdminDonationRo
     grossCents: d.grossAmountCents,
     refundedCents: d.refundedAmountCents,
     paymentMethodType: d.paymentMethodType,
+    participantId: d.participantId,
     participantName,
     participantSlug,
     medium,

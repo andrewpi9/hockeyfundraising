@@ -1,0 +1,4 @@
+Oswald is licensed under the SIL Open Font License, Version 1.1.
+Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)
+The font file here is used server-side to render social share images.
+Full license: https://openfontlicense.org

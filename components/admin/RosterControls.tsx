@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { inviteParticipant, revokeInvite, removeParticipant } from "@/app/admin/actions";
+import { inviteParticipant, revokeInvite, removeParticipant, reassignDonation, nudgeQuietParticipants } from "@/app/admin/actions";
 import type { ActionState } from "@/lib/actions";
 import { Button, Field, inputStyles } from "@/components/ui";
 import { Notice } from "./CampaignForm";
@@ -79,5 +79,58 @@ export function ClaimInviteForm({ campaignId, participantId }: { campaignId: str
       <Button type="submit" variant="outline" disabled={pending} className="h-8 px-2.5 py-1 text-xs">{pending ? "…" : "Send claim invite"}</Button>
       {state && !state.ok ? <span className="text-xs text-red-600">{state.message}</span> : null}
     </form>
+  );
+}
+
+export function ReassignSelect({ donationId, current, roster }: { donationId: string; current: string | null; roster: { id: string; displayName: string }[] }) {
+  const [pending, start] = useTransition();
+  const [state, setState] = useState<ActionState>(null);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <select
+        aria-label="Credit this gift to"
+        defaultValue={current ?? ""}
+        disabled={pending}
+        onChange={(e) => {
+          const fd = new FormData();
+          fd.set("donationId", donationId);
+          fd.set("participantId", e.target.value);
+          start(async () => setState(await reassignDonation(fd)));
+        }}
+        className={`${inputStyles} h-8 w-44 px-2 py-1 text-xs`}
+      >
+        <option value="">Team (no player)</option>
+        {roster.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.displayName}
+          </option>
+        ))}
+      </select>
+      {state ? <span className={`text-[11px] ${state.ok ? "text-carolina-700 dark:text-carolina-300" : "text-red-600"}`}>{state.message}</span> : null}
+    </span>
+  );
+}
+
+export function NudgeButton({ campaignId, quietCount }: { campaignId: string; quietCount: number }) {
+  const [pending, start] = useTransition();
+  const [state, setState] = useState<ActionState>(null);
+  if (quietCount === 0 && !state) return <span className="text-sm text-muted">Every signed-in player has shared at least once.</span>;
+  return (
+    <span className="inline-flex items-center gap-3">
+      <Button
+        type="button"
+        variant="outline"
+        disabled={pending || quietCount === 0}
+        onClick={() => {
+          if (!window.confirm(`Email ${quietCount} player${quietCount === 1 ? "" : "s"} who haven't shared yet?`)) return;
+          const fd = new FormData();
+          fd.set("campaignId", campaignId);
+          start(async () => setState(await nudgeQuietParticipants(fd)));
+        }}
+      >
+        {pending ? "Sending…" : `Nudge ${quietCount} who haven't shared`}
+      </Button>
+      {state ? <span className={`text-sm ${state.ok ? "text-carolina-700 dark:text-carolina-300" : "text-red-600"}`}>{state.message}</span> : null}
+    </span>
   );
 }

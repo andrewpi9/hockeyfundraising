@@ -35,7 +35,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title,
     description: data.participant.bio?.slice(0, 160) ?? data.campaign.description?.slice(0, 160) ?? undefined,
-    openGraph: { title, images: data.participant.photoUrl ? [data.participant.photoUrl] : [brand.logo] },
+    openGraph: { title },
   };
 }
 

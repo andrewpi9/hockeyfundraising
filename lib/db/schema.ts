@@ -33,7 +33,7 @@ const updatedAt = () =>
 export const membershipRole = pgEnum("membership_role", ["owner", "admin"]);
 export const campaignStatus = pgEnum("campaign_status", ["draft", "active", "closed"]);
 export const participantStatus = pgEnum("participant_status", ["invited", "active", "removed"]);
-export const shareMedium = pgEnum("share_medium", ["personal", "qr", "email_invite", "sms", "social"]);
+export const shareMedium = pgEnum("share_medium", ["personal", "qr", "email_invite", "sms", "social", "family"]);
 export const contactSource = pgEnum("contact_source", ["csv", "manual"]);
 export const emailInviteStatus = pgEnum("email_invite_status", [
   "queued",
@@ -256,6 +256,35 @@ export const linkEvents = pgTable(
   (t) => [index("link_events_share_link_idx").on(t.shareLinkId)],
 );
 
+/**
+ * A family member the player asked to help share their page. They get one
+ * "share kit" email with the player's link and a ready-to-forward note, then
+ * spread it from their own address book. Their link is distinct, so a gift
+ * that came through Mom is attributed as such. Third-party PII: encrypted.
+ */
+export const participantHelpers = pgTable(
+  "participant_helpers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    participantId: uuid("participant_id")
+      .notNull()
+      .references(() => participants.id, { onDelete: "cascade" }),
+    nameCiphertext: text("name_ciphertext").notNull(),
+    emailCiphertext: text("email_ciphertext").notNull(),
+    emailBlindIndex: text("email_blind_index").notNull(),
+    relationship: text("relationship"),
+    shareLinkId: uuid("share_link_id").references(() => shareLinks.id, { onDelete: "set null" }),
+    kitSentAt: timestamp("kit_sent_at", { withTimezone: true }),
+    kitSendCount: integer("kit_send_count").notNull().default(0),
+    unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("participant_helpers_participant_idx").on(t.participantId),
+    uniqueIndex("participant_helpers_participant_email_idx").on(t.participantId, t.emailBlindIndex),
+  ],
+);
+
 // ---------------------------------------------------------------- outreach
 
 /** A participant's private imported list. Third-party PII: fully encrypted. */
@@ -462,5 +491,6 @@ export type Participant = typeof participants.$inferSelect;
 export type ParticipantInvite = typeof participantInvites.$inferSelect;
 export type ShareLink = typeof shareLinks.$inferSelect;
 export type Contact = typeof contacts.$inferSelect;
+export type ParticipantHelper = typeof participantHelpers.$inferSelect;
 export type Donation = typeof donations.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;

@@ -6,18 +6,19 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { and, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { campaigns, participants, participantInvites, users, organizations } from "@/lib/db/schema";
+import { campaigns, participants, participantInvites, users, organizations, donations } from "@/lib/db/schema";
 import { requireAnyOrgAdmin, requireCampaignAdmin } from "@/lib/authz";
 import { encryptField, blindIndex, normalizeEmail, CTX } from "@/lib/crypto";
 import { joinCode } from "@/lib/ids";
 import { inviteToken, hashToken, INVITE_TTL_MS } from "@/lib/tokens";
-import { sendParticipantInvite } from "@/lib/email";
+import { sendParticipantInvite, sendParticipantNudge } from "@/lib/email";
 import { siteUrl } from "@/lib/site";
 import { audit } from "@/lib/audit";
 import { limiters } from "@/lib/ratelimit";
 import { runAction, checkbox, dateInput, type ActionState } from "@/lib/actions";
 import { parseDollarsToCents } from "@/lib/money";
 import { uniqueCampaignSlug } from "@/lib/queries/campaigns";
+import { listQuietParticipants } from "@/lib/queries/participants";
 
 
 const CampaignInput = z.object({
@@ -339,5 +340,86 @@ export async function updateOrganization(_prev: ActionState, formData: FormData)
     revalidatePath("/admin/settings");
     revalidatePath("/");
     return { ok: true, message: changed.length ? "Saved." : "No changes." };
+  });
+}
+
+// ---------------------------------------------------------------- donations: reassign attribution
+
+const ReassignInput = z.object({
+  donationId: z.string().uuid(),
+  /** Empty string credits the gift to the team as a whole. */
+  participantId: z.union([z.string().uuid(), z.literal("")]),
+});
+
+/**
+ * Moves a gift's credit to a different player (or to the team). Money is
+ * untouched — this only changes which page and leaderboard row it counts
+ * toward. The share link that produced it no longer applies, so it is cleared.
+ */
+export async function reassignDonation(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const input = ReassignInput.parse(Object.fromEntries(formData));
+    const [donation] = await db.select().from(donations).where(eq(donations.id, input.donationId)).limit(1);
+    if (!donation) return { ok: false, message: "Donation not found." };
+    const { user, campaign } = await requireCampaignAdmin(donation.campaignId);
+
+    let target: string | null = null;
+    if (input.participantId) {
+      const [p] = await db
+        .select({ id: participants.id })
+        .from(participants)
+        .where(and(eq(participants.id, input.participantId), eq(participants.campaignId, campaign.id)))
+        .limit(1);
+      if (!p) return { ok: false, message: "That player isn't in this campaign." };
+      target = p.id;
+    }
+    if (target === donation.participantId) return { ok: true, message: "No change." };
+
+    await db.update(donations).set({ participantId: target, shareLinkId: null, updatedAt: new Date() }).where(eq(donations.id, donation.id));
+    await audit({
+      action: "donation.reassign",
+      targetType: "donation",
+      targetId: donation.id,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+      metadata: { from_participant: donation.participantId, to_participant: target },
+    });
+
+    revalidatePath(`/admin/campaigns/${campaign.id}`);
+    revalidatePath(`/c/${campaign.slug}`);
+    return { ok: true, message: target ? "Reassigned." : "Credited to the team." };
+  });
+}
+
+// ---------------------------------------------------------------- participants: nudge the quiet ones
+
+export async function nudgeQuietParticipants(formData: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const campaignId = z.string().uuid().parse(formData.get("campaignId"));
+    const { user, campaign } = await requireCampaignAdmin(campaignId);
+    // One nudge round per campaign per day. Reminders lose their force fast.
+    if (!(await limiters.export.limit(`nudge:${campaign.id}`)).success) return { ok: false, message: "Already nudged recently. Try again tomorrow." };
+    if (campaign.status !== "active") return { ok: false, message: "The campaign isn't active." };
+
+    const quiet = await listQuietParticipants(campaign.id);
+    let sent = 0;
+    for (const q of quiet) {
+      try {
+        await sendParticipantNudge({
+          to: q.email,
+          firstName: (q.displayName.split(" ")[0] ?? q.displayName),
+          campaignName: campaign.name,
+          coachName: user.name,
+          consoleUrl: siteUrl(`/dashboard/${q.participantId}`),
+        });
+        sent += 1;
+      } catch (err) {
+        console.error("[nudge] send failed:", err instanceof Error ? err.message : "unknown");
+      }
+    }
+
+    await audit({ action: "participant.nudge", targetType: "campaign", targetId: campaign.id, orgId: campaign.orgId, actorUserId: user.id, metadata: { quiet_count: quiet.length, sent } });
+    revalidatePath(`/admin/campaigns/${campaign.id}`);
+    return { ok: true, message: quiet.length === 0 ? "Everyone has shared at least once." : `Nudged ${sent} of ${quiet.length}.` };
   });
 }

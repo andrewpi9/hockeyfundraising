@@ -66,7 +66,7 @@ async function main() {
   const tables = await client.query<{ n: string }>(
     "select table_name as n from information_schema.tables where table_schema='public' order by 1",
   );
-  check("all 16 tables created", tables.rows.length, 16);
+  check("all 17 tables created", tables.rows.length, 17);
 
   // ------------------------------------------------------------ crypto
   console.log("\nEncryption");
@@ -722,6 +722,69 @@ async function main() {
   check("short-name ambiguity (Mat → Matt & Matthew) → null", scrape.matchPlayer(parsed, "The Halvorsen"), null);
   check("prefix match resolves when unique", scrape.matchPlayer([parsed[0]!, parsed[1]!], "Theodore Halvorsen")?.number, "22");
   check("too-short first name never loose-matches", scrape.matchPlayer(parsed, "Av Lindqvist"), null);
+
+  // ------------------------------------------------------------ family helpers
+  console.log("\nFamily helpers");
+  const hl = await import("../lib/helpers");
+  const ctxH = { participant: p3, campaign: active!, org: orgAddr! };
+  const { helper: h1, kitSent } = await hl.createHelper(ctxH, { name: "Mom Miller", email: "Mom@Family.test", relationship: "Parent" });
+  check("helper created and kit sent", kitSent, true);
+  check("helper has its own family link", (await db.select().from(schema.shareLinks).where(eq(schema.shareLinks.id, h1.shareLinkId!)))[0]!.medium, "family");
+  const reloadH1 = async () => (await db.select().from(schema.participantHelpers).where(eq(schema.participantHelpers.id, h1.id)))[0]!;
+  check("kit counted", (await reloadH1()).kitSendCount, 1);
+  check("helper PII stored encrypted", (await reloadH1()).emailCiphertext.includes("family.test"), false);
+  await throws("duplicate helper refused (case-insensitive)", () => hl.createHelper(ctxH, { name: "Mom", email: "mom@family.test", relationship: null }), /already/);
+  await throws("resend inside 24h refused", async () => hl.sendKit(ctxH, await reloadH1()), /24 hours/);
+  await db.insert(schema.suppressions).values({ orgId: org!.id, emailBlindIndex: c.blindIndex("email", "optedout@family.test"), reason: "unsubscribed" }).onConflictDoNothing();
+  await throws("suppressed address refused", () => hl.createHelper(ctxH, { name: "X", email: "optedout@family.test", relationship: null }), /opted out/);
+  for (const i of [2, 3, 4]) await hl.createHelper(ctxH, { name: `Helper ${i}`, email: `h${i}@family.test`, relationship: null });
+  await throws("helper cap enforced", () => hl.createHelper(ctxH, { name: "H5", email: "h5@family.test", relationship: null }), /up to 4/);
+  const helpers = await hl.listHelpers(p3.id);
+  check("helpers listed, decrypted for the owner", helpers[0]!.name, "Mom Miller");
+  check("helper email normalised", helpers[0]!.email, "mom@family.test");
+  check("resend blocked during cooldown", helpers[0]!.canResend, false);
+  check("resend allowed after a day", (await hl.listHelpers(p3.id, new Date(Date.now() + 25 * 3_600_000)))[0]!.canResend, true);
+  check("unsubscribe token round-trips for a helper", c.verifyUnsubscribeToken(c.signUnsubscribeToken(h1.id)), h1.id);
+  check("helper can unsubscribe", await applyUnsubscribe(h1.id, "unsubscribed"), true);
+  check("helper flagged unsubscribed", (await hl.listHelpers(p3.id))[0]!.unsubscribed, true);
+  check("helper address suppressed org-wide", await cq.isSuppressed(org!.id, c.blindIndex("email", "mom@family.test")), true);
+  await throws("kit refused after unsubscribe", async () => hl.sendKit(ctxH, await reloadH1()), /unsubscribed/);
+  await db.insert(schema.donations).values({ campaignId: active!.id, participantId: p3.id, shareLinkId: h1.shareLinkId, grossAmountCents: 5000, designatedAmountCents: 5000, status: "succeeded" });
+  const viaMom = (await hl.listHelpers(p3.id))[0]!;
+  check("gift through the helper's link is credited to them", [viaMom.gifts, viaMom.raisedCents], [1, 5000]);
+  check("quiet-participant query excludes placeholders and includes claimed-but-silent", (await pq2.listQuietParticipants(legacy2!.id)).map((q) => q.displayName).sort(), ["Import Two"]);
+
+  // ------------------------------------------------------------ webhook routes, offline, with real signatures
+  console.log("\nStripe webhook route (offline, signed)");
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_verify_test_secret";
+  const { POST: stripeWebhook } = await import("../app/api/webhooks/stripe/route");
+  const dW = await mkDonation({ stripeCheckoutSessionId: "cs_test_wh1" });
+  const whPayload = JSON.stringify({ id: "evt_wh_1", object: "event", type: "checkout.session.completed", data: { object: { id: "cs_test_wh1", object: "checkout.session", payment_status: "paid", amount_total: 10256, payment_intent: "pi_wh1", payment_method_types: ["card"], metadata: { donationId: dW.id } } } });
+  const whSig = stripeMod.getStripe().webhooks.generateTestHeaderString({ payload: whPayload, secret: "whsec_verify_test_secret" });
+  const whReq = (body: string, sig?: string) => new Request("http://localhost/api/webhooks/stripe", { method: "POST", body, headers: sig ? { "stripe-signature": sig } : {} });
+  const whRes = await stripeWebhook(whReq(whPayload, whSig));
+  check("signed event accepted", whRes.status, 200);
+  check("donation promoted through the real route", (await db.select().from(schema.donations).where(eq(schema.donations.id, dW.id)))[0]!.status, "succeeded");
+  check("replay reported as duplicate", (await (await stripeWebhook(whReq(whPayload, whSig))).json()).duplicate, true);
+  check("tampered signature refused", (await stripeWebhook(whReq(whPayload, whSig.replace(/v1=[0-9a-f]{6}/, "v1=000000")))).status, 400);
+  check("tampered body refused", (await stripeWebhook(whReq(whPayload.replace("10256", "10257"), whSig))).status, 400);
+  check("missing signature refused", (await stripeWebhook(whReq(whPayload))).status, 400);
+
+  console.log("\nResend webhook route (offline, signed)");
+  const { Webhook: SvixWebhook } = await import("svix");
+  const resendSecret = `whsec_${Buffer.from("resend-verify-test-secret-xx").toString("base64")}`;
+  process.env.RESEND_WEBHOOK_SECRET = resendSecret;
+  const { POST: resendWebhook } = await import("../app/api/webhooks/resend/route");
+  const [inviteA] = await db.select().from(schema.emailInvites).where(eq(schema.emailInvites.contactId, cA.id));
+  const rsPayload = JSON.stringify({ type: "email.bounced", created_at: new Date().toISOString(), data: { email_id: inviteA!.providerMessageId, to: ["a@contacts.test"], bounce: { type: "Permanent", subType: "General" } } });
+  const rsId = "msg_verify_1"; const rsTs = new Date();
+  const rsSig = new SvixWebhook(resendSecret).sign(rsId, rsTs, rsPayload);
+  const rsReq = (body: string, sig: string, id = rsId) => new Request("http://localhost/api/webhooks/resend", { method: "POST", body, headers: { "svix-id": id, "svix-timestamp": String(Math.floor(rsTs.getTime() / 1000)), "svix-signature": sig } });
+  check("signed bounce accepted", (await resendWebhook(rsReq(rsPayload, rsSig))).status, 200);
+  check("invite marked bounced", (await db.select().from(schema.emailInvites).where(eq(schema.emailInvites.id, inviteA!.id)))[0]!.status, "bounced");
+  check("permanent bounce suppresses the contact", Boolean((await db.select().from(schema.contacts).where(eq(schema.contacts.id, cA.id)))[0]!.unsubscribedAt), true);
+  check("replay ignored", (await (await resendWebhook(rsReq(rsPayload, rsSig))).json()).duplicate, true);
+  check("bad signature refused", (await resendWebhook(rsReq(rsPayload, "v1,AAAA", "msg_verify_2"))).status, 400);
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);

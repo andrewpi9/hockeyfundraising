@@ -6,6 +6,7 @@ import { Supporters } from "@/components/participant/Supporters";
 import { ProfileForm, PhotoUploader } from "@/components/participant/ProfileForm";
 import { ShareCard } from "@/components/participant/ShareCard";
 import { Contacts } from "@/components/participant/Contacts";
+import { Helpers } from "@/components/participant/Helpers";
 import { Stat, card, buttonStyles } from "@/components/ui";
 import { participantOwnerPage } from "@/lib/page-guards";
 import { getParticipantConsole } from "@/lib/queries/participants";
@@ -54,7 +55,7 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
         </header>
 
         <section className={`${card} p-5`}>
-          <h2 className="text-lg font-bold">Your link</h2>
+          <h2 className="font-display text-2xl font-bold uppercase">Your link</h2>
           <p className="mb-4 mt-1 text-sm text-muted">
             Post it anywhere — a story, a group chat, an email signature. The QR code works on a poster or a locker-room whiteboard.
             Every click is tracked back to you.
@@ -62,12 +63,14 @@ export default async function ParticipantConsole({ params }: { params: Promise<{
           <ShareCard url={shareUrl} code={shareCode} />
         </section>
 
-        <Supporters participantId={participant.id} />
-
         <Contacts participantId={participant.id} campaignActive={campaign.status === "active"} />
 
+        <Helpers participantId={participant.id} campaignActive={campaign.status === "active"} />
+
+        <Supporters participantId={participant.id} />
+
         <section className={`${card} p-5`}>
-          <h2 className="mb-4 text-lg font-bold">Your page</h2>
+          <h2 className="mb-4 font-display text-2xl font-bold uppercase">Your page</h2>
           <div className="grid gap-6 sm:grid-cols-[160px_1fr]">
             <PhotoUploader participantId={participant.id} photoUrl={participant.photoUrl} name={participant.displayName} />
             <ProfileForm
