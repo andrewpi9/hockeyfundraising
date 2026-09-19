@@ -362,6 +362,18 @@ uploaded themselves is never overwritten. The parser is pure and tested
 against the page's real markup (`lib/roster-scrape.ts`). Photos and the logo
 are the team's own assets; confirm with the program before publishing.
 
+## Bootstrapping a fresh deployment
+
+Schema migrations run during the Vercel build (`build:vercel` = `drizzle-kit
+migrate && next build`), so the database is always at the schema the running
+code expects. Marketplace database credentials are hidden secrets that cannot
+be pulled to a laptop, so the first data load happens through a one-time
+endpoint: set `SETUP_TOKEN` (48 random bytes) in the project's env, deploy,
+then `POST /api/setup` with `Authorization: Bearer <token>` and a body of
+`{"op":"seed","name":"…"}` followed by `{"op":"import","payload":<roster
+json>}`. **Remove `SETUP_TOKEN` immediately afterwards and redeploy** — while
+it is unset the route returns 404.
+
 ## Operations
 
 - **Rotate PII keys:** add a new id to `PII_ENCRYPTION_KEYS`, point
