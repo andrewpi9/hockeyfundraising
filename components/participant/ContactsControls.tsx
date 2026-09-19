@@ -76,7 +76,7 @@ function statusLabel(c: ContactRow): { text: string; tone: "muted" | "good" | "b
   return null;
 }
 
-export function ContactsList({ participantId, contacts, campaignActive }: { participantId: string; contacts: ContactRow[]; campaignActive: boolean }) {
+export function ContactsList({ participantId, contacts, campaignActive, emailEnabled = true }: { participantId: string; contacts: ContactRow[]; campaignActive: boolean; emailEnabled?: boolean }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sendState, sendAction, sending] = useActionState(sendInvites, null);
   const [pendingSms, startSms] = useTransition();
@@ -124,7 +124,7 @@ export function ContactsList({ participantId, contacts, campaignActive }: { part
               </button>
             ) : null}
           </div>
-          <Button type="submit" disabled={sending || selected.size === 0 || !campaignActive} className="px-4 py-2 text-sm">
+          <Button type="submit" disabled={sending || selected.size === 0 || !campaignActive || !emailEnabled} className="px-4 py-2 text-sm">
             {sending ? "Sending…" : `Send ${selected.size || ""} invite${selected.size === 1 ? "" : "s"}`}
           </Button>
         </div>
@@ -136,6 +136,7 @@ export function ContactsList({ participantId, contacts, campaignActive }: { part
           className={`${inputStyles} mt-3 resize-y text-sm`}
         />
         {!campaignActive ? <p className="mt-2 text-xs text-muted">Email invites open when the campaign launches. Texting works now.</p> : null}
+        {campaignActive && !emailEnabled ? <p className="mt-2 text-xs text-muted">Email sending opens once the organization connects its sender. Texting and your share link work now.</p> : null}
         <Notice state={sendState} />
       </form>
 

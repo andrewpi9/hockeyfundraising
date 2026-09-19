@@ -1,5 +1,6 @@
 import { loadContactRows } from "@/lib/queries/contacts";
 import { CONTACT_CAP } from "@/lib/outreach";
+import { emailConfigured } from "@/lib/email";
 import { card } from "@/components/ui";
 import { ContactsList, ImportForm, PasteForm, AddContactForm } from "./ContactsControls";
 
@@ -53,7 +54,7 @@ export async function Contacts({ participantId, campaignActive }: { participantI
           </details>
         </div>
         <div className="border-t border-border pt-5">
-          <ContactsList participantId={participantId} contacts={contacts} campaignActive={campaignActive} />
+          <ContactsList participantId={participantId} contacts={contacts} campaignActive={campaignActive} emailEnabled={emailConfigured()} />
         </div>
       </div>
     </section>

@@ -15,8 +15,13 @@ export interface Limiter {
   limit(identifier: string, tokens?: number): Promise<LimitResult>;
 }
 
-const hasRedis = () =>
-  Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+/** Upstash's own names, or the KV_* names the Vercel marketplace integration sets. */
+function redisEnv(): { url: string; token: string } | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  return url && token ? { url, token } : null;
+}
+const hasRedis = () => Boolean(redisEnv());
 
 let warned = false;
 
@@ -50,8 +55,9 @@ function build(name: string, tokens: number, window: Duration): Limiter {
     if (inner) return inner;
     let created: Limiter;
     if (hasRedis()) {
+      const { url, token } = redisEnv()!;
       const rl = new Ratelimit({
-        redis: Redis.fromEnv(),
+        redis: new Redis({ url, token }),
         limiter: Ratelimit.slidingWindow(tokens, window),
         prefix: `rl:${name}`,
         analytics: false,
@@ -60,7 +66,7 @@ function build(name: string, tokens: number, window: Duration): Limiter {
       created = { limit: (id, cost = 1) => rl.limit(id, cost > 1 ? { rate: cost } : undefined) };
     } else if (process.env.NODE_ENV === "production") {
       throw new Error(
-        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required in production. " +
+        "UPSTASH_REDIS_REST_URL/TOKEN (or KV_REST_API_URL/TOKEN) are required in production. " +
           "Refusing to run with per-instance in-memory rate limits.",
       );
     } else {

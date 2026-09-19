@@ -16,6 +16,16 @@ function usableKey(): string | null {
   return key && /^re_[A-Za-z0-9]{8,}$/.test(key) ? key : null;
 }
 
+export class EmailNotConfiguredError extends Error {
+  constructor() {
+    super("Email sending isn't set up on this site yet. Texting and sharing your link work now; email opens when the organization connects its sender.");
+    this.name = "EmailNotConfiguredError";
+  }
+}
+
+/** True when a real provider key is present — the UI uses this to explain, not fail. */
+export const emailConfigured = () => Boolean(usableKey());
+
 let client: Resend | null | undefined;
 export function getResend(): Resend | null {
   if (client !== undefined) return client;
@@ -33,7 +43,7 @@ async function send({ to, subject, html, text, headers }: SendArgs): Promise<str
     if (isProductionDeploy()) {
       // Misconfigured production must not write recipients and bodies to the log stream.
       console.error(`[email] RESEND_API_KEY not configured; dropped "${subject}" to ${maskEmail(to)}`);
-      throw new Error("Email is not configured.");
+      throw new EmailNotConfiguredError();
     }
     if (!process.env.EMAIL_SILENT) {
       console.log(`\n--- EMAIL (RESEND_API_KEY not configured) ---\nTo: ${to}\nSubject: ${subject}\n\n${text}\n---\n`);

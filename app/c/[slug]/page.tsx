@@ -13,6 +13,7 @@ import { brand } from "@/lib/brand";
 import { getOrg, getPublicCampaignBySlug } from "@/lib/queries/campaigns";
 import { listParticipantsWithTotals } from "@/lib/queries/participants";
 import { listPublicDonations } from "@/lib/queries/donations";
+import { paymentsConfigured, paymentsInTestMode } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -103,7 +104,9 @@ export default async function CampaignPage({ params }: Props) {
           </div>
           <aside id="donate" className="scroll-mt-24 space-y-4 lg:sticky lg:top-24">
             {campaign.status === "active" ? (
-              <DonateForm campaignSlug={campaign.slug} allowFeeCover={campaign.allowFeeCover} platformFeeBps={campaign.platformFeeBps} turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || undefined} />
+              <DonateForm campaignSlug={campaign.slug} allowFeeCover={campaign.allowFeeCover} platformFeeBps={campaign.platformFeeBps} turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || undefined}
+                paymentsEnabled={paymentsConfigured()}
+                testMode={paymentsInTestMode()} />
             ) : null}
             <FeeDisclosure platformFeeBps={campaign.platformFeeBps} allowFeeCover={campaign.allowFeeCover} />
           </aside>

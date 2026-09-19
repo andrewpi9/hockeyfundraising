@@ -15,6 +15,8 @@ export function DonateForm({
   allowFeeCover,
   platformFeeBps,
   turnstileSiteKey,
+  paymentsEnabled = true,
+  testMode = false,
 }: {
   campaignSlug: string;
   participantSlug?: string;
@@ -23,6 +25,10 @@ export function DonateForm({
   allowFeeCover: boolean;
   platformFeeBps: number;
   turnstileSiteKey?: string;
+  /** False until the organization's Stripe key is configured. */
+  paymentsEnabled?: boolean;
+  /** Stripe test mode on a live site: no real charges. */
+  testMode?: boolean;
 }) {
   const [selected, setSelected] = useState<number | "custom">(5000);
   const [custom, setCustom] = useState("");
@@ -81,6 +87,18 @@ export function DonateForm({
     }
   }
 
+  if (!paymentsEnabled) {
+    return (
+      <div className={`${card} p-5 sm:p-6`}>
+        <h2 className="text-lg font-bold">{participantName ? `Support ${participantName}` : "Make a donation"}</h2>
+        <p className="mt-3 rounded-xl bg-carolina-50 px-4 py-3 text-sm leading-relaxed dark:bg-navy-800">
+          <strong>Online donations open soon.</strong> The program is finishing its payment setup. Share this page now — the link stays the same — and check back to give.
+        </p>
+        <p className="mt-3 text-xs text-muted">When it opens: secure checkout by Stripe, no platform fee, funds go directly to the organization.</p>
+      </div>
+    );
+  }
+
   const pressed = (on: boolean) =>
     `rounded-xl border px-2 py-3 text-base font-bold tabular-nums transition ${on ? "border-carolina-400 bg-carolina-400/15 text-carolina-700 dark:text-carolina-200" : "border-border hover:border-carolina-300"}`;
 
@@ -90,6 +108,11 @@ export function DonateForm({
       <p className="mt-1 text-sm text-muted">
         {platformFeeBps === 0 ? "No platform fee. " : ""}Settles directly to the organization&rsquo;s account.
       </p>
+      {testMode ? (
+        <p role="status" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          Test mode — no real money moves. Use card 4242 4242 4242 4242 to try it.
+        </p>
+      ) : null}
 
       <fieldset className="mt-5">
         <legend className="mb-2 text-sm font-medium">Choose an amount</legend>

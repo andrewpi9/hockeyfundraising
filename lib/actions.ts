@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { AuthError } from "./authz";
+import { EmailNotConfiguredError } from "./email";
 
 export type ActionState =
   | { ok: true; message: string; id?: string }
@@ -23,6 +24,9 @@ export async function runAction(body: () => Promise<ActionState>): Promise<Actio
         ok: false,
         message: err.code === "UNAUTHENTICATED" ? "Please sign in." : "You don't have permission to do that.",
       };
+    }
+    if (err instanceof EmailNotConfiguredError) {
+      return { ok: false, message: err.message };
     }
     if (err instanceof ZodError) {
       return { ok: false, message: err.issues[0]?.message ?? "Please check the form." };

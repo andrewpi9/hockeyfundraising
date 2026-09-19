@@ -11,6 +11,7 @@ import { brand, classYearLabel } from "@/lib/brand";
 import { getOrg, getPublicCampaignBySlug } from "@/lib/queries/campaigns";
 import { getParticipantPublic } from "@/lib/queries/participants";
 import { listPublicDonations } from "@/lib/queries/donations";
+import { paymentsConfigured, paymentsInTestMode } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,8 @@ export default async function ParticipantPage({ params, searchParams }: Props) {
                 allowFeeCover={campaign.allowFeeCover}
                 platformFeeBps={campaign.platformFeeBps}
                 turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || undefined}
+                paymentsEnabled={paymentsConfigured()}
+                testMode={paymentsInTestMode()}
               />
             ) : null}
             <FeeDisclosure platformFeeBps={campaign.platformFeeBps} allowFeeCover={campaign.allowFeeCover} />

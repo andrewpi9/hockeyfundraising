@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { donations, participants, shareLinks } from "@/lib/db/schema";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, paymentsConfigured } from "@/lib/stripe";
 import { siteUrl } from "@/lib/site";
 import { CheckoutInput } from "@/lib/checkout-schema";
 import { feeForAmount, platformFeeFor, formatMoney } from "@/lib/money";
@@ -18,6 +18,9 @@ import { getOrg, getPublicCampaignBySlug } from "@/lib/queries/campaigns";
  * signed webhook promotes it, so nothing here can mint a "succeeded" gift.
  */
 export async function POST(req: Request) {
+  if (!paymentsConfigured()) {
+    return NextResponse.json({ error: "Online donations aren't open yet. Check back soon." }, { status: 503 });
+  }
   const ip = clientIp(req);
   const limit = await limiters.checkout.limit(ip);
   if (!limit.success) return tooMany(limit);
