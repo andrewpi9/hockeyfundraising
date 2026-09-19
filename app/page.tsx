@@ -9,8 +9,29 @@ import { listParticipantsWithTotals } from "@/lib/queries/participants";
 
 export const dynamic = "force-dynamic";
 
+/** Before the database exists the site is "setting up", not broken. */
+async function loadOrg() {
+  try {
+    return { org: await getOrg(), ready: true };
+  } catch (err) {
+    console.error("[home] database unavailable:", err instanceof Error ? err.message : "unknown");
+    return { org: null, ready: false };
+  }
+}
+
 export default async function HomePage() {
-  const org = await getOrg();
+  const { org, ready } = await loadOrg();
+  if (!ready) {
+    return (
+      <main className="ice-hero grid min-h-screen place-items-center px-4 text-white">
+        <div className="max-w-md text-center">
+          <Image src={brand.logo} alt={brand.name} width={220} height={172} priority className="mx-auto w-44 drop-shadow-[0_12px_32px_rgba(75,156,211,0.4)]" />
+          <h1 className="mt-6 font-display text-4xl font-bold uppercase">Setting up</h1>
+          <p className="mt-3 text-carolina-100">The fundraising site is being connected. Check back shortly.</p>
+        </div>
+      </main>
+    );
+  }
   if (!org) {
     return (
       <main className="mx-auto w-full max-w-xl flex-1 px-4 py-24 text-center">
