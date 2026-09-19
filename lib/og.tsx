@@ -28,7 +28,8 @@ async function dataUrl(rel: string, mime: string) {
 async function photoDataUrl(url: string | null | undefined): Promise<string | null> {
   if (!url) return null;
   try {
-    if (url.startsWith("/")) {
+    // Local reads are confined to the roster directory by shape, not just prefix.
+    if (/^\/roster\/[a-z0-9-]+\.(jpe?g|png|webp)$/.test(url)) {
       const mime = url.endsWith(".png") ? "image/png" : url.endsWith(".webp") ? "image/webp" : "image/jpeg";
       return await dataUrl(url, mime);
     }

@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { webhookEvents } from "@/lib/db/schema";
 import { getStripe } from "@/lib/stripe";
 import { processStripeEvent } from "@/lib/stripe-events";
+import { claimWebhookEvent, settleWebhookEvent, failWebhookEvent } from "@/lib/webhook-ledger";
 
 /**
  * Only two things happen here: the signature is checked against the org's
@@ -29,25 +27,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  const inserted = await db
-    .insert(webhookEvents)
-    .values({ provider: "stripe", eventId: event.id, type: event.type })
-    .onConflictDoNothing()
-    .returning({ id: webhookEvents.id });
-  if (inserted.length === 0) return NextResponse.json({ received: true, duplicate: true });
-  const ledgerId = inserted[0]!.id;
+  const ledgerId = await claimWebhookEvent("stripe", event.id, event.type);
+  if (!ledgerId) return NextResponse.json({ received: true, duplicate: true });
 
   try {
     const outcome = await processStripeEvent(event);
-    await db
-      .update(webhookEvents)
-      .set({ status: outcome === "ignored" ? "ignored" : "processed", processedAt: new Date() })
-      .where(and(eq(webhookEvents.id, ledgerId), eq(webhookEvents.status, "received")));
+    await settleWebhookEvent(ledgerId, outcome === "ignored" ? "ignored" : "processed");
     return NextResponse.json({ received: true, outcome });
   } catch (err) {
     // A 500 makes Stripe retry with backoff — right for a transient DB failure.
-    // The ledger row is released so the retry is not treated as a duplicate.
-    await db.delete(webhookEvents).where(eq(webhookEvents.id, ledgerId));
+    // The row is marked failed (never deleted) so the retry can re-claim it.
+    await failWebhookEvent(ledgerId, err);
     console.error(`[stripe] ${event.type} failed:`, err instanceof Error ? err.message : "unknown");
     return NextResponse.json({ error: "Handler failed" }, { status: 500 });
   }

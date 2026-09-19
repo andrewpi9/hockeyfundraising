@@ -786,6 +786,34 @@ async function main() {
   check("replay ignored", (await (await resendWebhook(rsReq(rsPayload, rsSig))).json()).duplicate, true);
   check("bad signature refused", (await resendWebhook(rsReq(rsPayload, "v1,AAAA", "msg_verify_2"))).status, 400);
 
+  // ------------------------------------------------------------ review fixes
+  console.log("\nWebhook ledger: failed attempts are retryable, never deleted");
+  const ledger = await import("../lib/webhook-ledger");
+  const first = await ledger.claimWebhookEvent("stripe", "evt_retry_1", "checkout.session.completed");
+  check("first claim succeeds", Boolean(first), true);
+  check("second claim while received is a duplicate", await ledger.claimWebhookEvent("stripe", "evt_retry_1", "checkout.session.completed"), null);
+  await ledger.failWebhookEvent(first!, new Error("db hiccup"));
+  const reclaimed = await ledger.claimWebhookEvent("stripe", "evt_retry_1", "checkout.session.completed");
+  check("a failed row is re-claimed on retry (same ledger id)", reclaimed, first);
+  await ledger.settleWebhookEvent(reclaimed!, "processed");
+  check("processed row is not re-claimable", await ledger.claimWebhookEvent("stripe", "evt_retry_1", "checkout.session.completed"), null);
+  check("failed rows never deleted", (await db.select().from(schema.webhookEvents).where(eq(schema.webhookEvents.eventId, "evt_retry_1"))).length, 1);
+  // The route itself: a stranded 'failed' ledger row must not block the real retry.
+  const dR = await mkDonation({ stripeCheckoutSessionId: "cs_test_retry" });
+  const rPayload = JSON.stringify({ id: "evt_retry_2", object: "event", type: "checkout.session.completed", data: { object: { id: "cs_test_retry", object: "checkout.session", payment_status: "paid", amount_total: 10256, payment_intent: "pi_retry", payment_method_types: ["card"], metadata: { donationId: dR.id } } } });
+  await db.insert(schema.webhookEvents).values({ provider: "stripe", eventId: "evt_retry_2", type: "checkout.session.completed", status: "failed", errorMessage: "earlier outage" });
+  const rSig = stripeMod.getStripe().webhooks.generateTestHeaderString({ payload: rPayload, secret: "whsec_verify_test_secret" });
+  const rRes = await stripeWebhook(whReq(rPayload, rSig));
+  check("retry after a failed attempt is processed, not 'duplicate'", (await rRes.json()).outcome, "processed");
+  check("donation promoted on the retry", (await db.select().from(schema.donations).where(eq(schema.donations.id, dR.id)))[0]!.status, "succeeded");
+
+  console.log("\nParticipant view: abandoned card checkouts are not supporters");
+  await mkDonation({ stripeCheckoutSessionId: "cs_test_abandoned", status: "pending", paymentMethodType: "card", donorNameCiphertext: c.encryptField("Abandoned Al", c.CTX.donorName) });
+  await mkDonation({ stripeCheckoutSessionId: "cs_test_ach", status: "pending", paymentMethodType: "us_bank_account", donorNameCiphertext: c.encryptField("Bank Bella", c.CTX.donorName) });
+  const sup = await dq.listDonorsForParticipant(p3.id);
+  check("pending card checkout hidden from participant", sup.some((x) => x.donorName === "Abandoned Al"), false);
+  check("pending bank transfer shown as settling", sup.some((x) => x.donorName === "Bank Bella" && x.status === "pending"), true);
+
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} checks passed\n`);
   process.exit(failures === 0 ? 0 : 1);
 }

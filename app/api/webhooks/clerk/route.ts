@@ -1,9 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
-import { eq, and } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { webhookEvents } from "@/lib/db/schema";
 import { upsertUserFromClerk, softDeleteUserFromClerk } from "@/lib/authz";
+import { claimWebhookEvent, settleWebhookEvent, failWebhookEvent } from "@/lib/webhook-ledger";
 
 /**
  * Keeps `users` in sync with Clerk. verifyWebhook() checks the Svix signature
@@ -18,24 +16,19 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  // Svix retries; the (provider, event_id) unique index makes replays no-ops.
+  // Svix retries; the (provider, event_id) ledger makes replays no-ops and lets a failed attempt retry.
   const eventId = req.headers.get("svix-id") ?? `${evt.type}:${evt.data.id}`;
-  const inserted = await db
-    .insert(webhookEvents)
-    .values({ provider: "clerk", eventId, type: evt.type })
-    .onConflictDoNothing()
-    .returning({ id: webhookEvents.id });
-  if (inserted.length === 0) return Response.json({ received: true, duplicate: true });
-  const ledgerId = inserted[0]!.id;
+  const ledgerId = await claimWebhookEvent("clerk", eventId, evt.type);
+  if (!ledgerId) return Response.json({ received: true, duplicate: true });
 
   try {
     switch (evt.type) {
       case "user.created":
       case "user.updated": {
         const d = evt.data;
-        const primary =
-          d.email_addresses.find((e) => e.id === d.primary_email_address_id)?.email_address ??
-          d.email_addresses[0]?.email_address;
+        // Only a verified address may become identity; an unverified one could be anyone's.
+        const verified = d.email_addresses.filter((e) => e.verification?.status === "verified");
+        const primary = verified.find((e) => e.id === d.primary_email_address_id)?.email_address ?? verified[0]?.email_address;
         if (!primary) break;
         await upsertUserFromClerk({
           clerkUserId: d.id,
@@ -50,24 +43,14 @@ export async function POST(req: NextRequest) {
         break;
       }
       default:
-        await db
-          .update(webhookEvents)
-          .set({ status: "ignored", processedAt: new Date() })
-          .where(eq(webhookEvents.id, ledgerId));
+        await settleWebhookEvent(ledgerId, "ignored");
         return Response.json({ received: true, ignored: true });
     }
 
-    await db
-      .update(webhookEvents)
-      .set({ status: "processed", processedAt: new Date() })
-      .where(and(eq(webhookEvents.id, ledgerId), eq(webhookEvents.status, "received")));
+    await settleWebhookEvent(ledgerId, "processed");
     return Response.json({ received: true });
   } catch (err) {
-    // Message only — never the payload, which carries the user's email.
-    await db
-      .update(webhookEvents)
-      .set({ status: "failed", errorMessage: err instanceof Error ? err.message : "unknown" })
-      .where(eq(webhookEvents.id, ledgerId));
+    await failWebhookEvent(ledgerId, err);
     return Response.json({ error: "Handler failed" }, { status: 500 });
   }
 }

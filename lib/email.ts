@@ -1,6 +1,8 @@
 import { Resend } from "resend";
 import { formatMoney } from "./money";
 import { escapeHtml as esc } from "./html";
+import { isProductionDeploy } from "./site";
+import { maskEmail } from "./mask";
 
 const from = process.env.EMAIL_FROM ?? "fundraising@example.org";
 
@@ -28,6 +30,11 @@ type SendArgs = { to: string; subject: string; html: string; text: string; heade
 async function send({ to, subject, html, text, headers }: SendArgs): Promise<string> {
   const resend = getResend();
   if (!resend) {
+    if (isProductionDeploy()) {
+      // Misconfigured production must not write recipients and bodies to the log stream.
+      console.error(`[email] RESEND_API_KEY not configured; dropped "${subject}" to ${maskEmail(to)}`);
+      throw new Error("Email is not configured.");
+    }
     if (!process.env.EMAIL_SILENT) {
       console.log(`\n--- EMAIL (RESEND_API_KEY not configured) ---\nTo: ${to}\nSubject: ${subject}\n\n${text}\n---\n`);
     }

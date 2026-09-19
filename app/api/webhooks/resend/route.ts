@@ -1,8 +1,9 @@
 import { Webhook } from "svix";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { emailInvites, webhookEvents } from "@/lib/db/schema";
+import { emailInvites } from "@/lib/db/schema";
 import { applyUnsubscribe } from "@/lib/unsubscribe";
+import { claimWebhookEvent, settleWebhookEvent, failWebhookEvent } from "@/lib/webhook-ledger";
 
 /** Shape per Resend's email.bounced docs: data.email_id is the id returned by emails.send(). */
 type ResendEvent = {
@@ -46,19 +47,14 @@ export async function POST(req: Request) {
   }
 
   const eventId = svixHeaders["svix-id"] || `${event.type}:${event.data.email_id ?? "?"}`;
-  const inserted = await db
-    .insert(webhookEvents)
-    .values({ provider: "resend", eventId, type: event.type })
-    .onConflictDoNothing()
-    .returning({ id: webhookEvents.id });
-  if (inserted.length === 0) return Response.json({ received: true, duplicate: true });
-  const ledgerId = inserted[0]!.id;
+  const ledgerId = await claimWebhookEvent("resend", eventId, event.type);
+  if (!ledgerId) return Response.json({ received: true, duplicate: true });
 
   try {
     const status = STATUS[event.type];
     const messageId = event.data.email_id;
     if (!status || !messageId) {
-      await db.update(webhookEvents).set({ status: "ignored", processedAt: new Date() }).where(eq(webhookEvents.id, ledgerId));
+      await settleWebhookEvent(ledgerId, "ignored");
       return Response.json({ received: true, ignored: true });
     }
 
@@ -76,16 +72,10 @@ export async function POST(req: Request) {
       if (hard) await applyUnsubscribe(invite.contactId, status === "complained" ? "complained" : "bounced");
     }
 
-    await db
-      .update(webhookEvents)
-      .set({ status: "processed", processedAt: new Date() })
-      .where(and(eq(webhookEvents.id, ledgerId), eq(webhookEvents.status, "received")));
+    await settleWebhookEvent(ledgerId, "processed");
     return Response.json({ received: true });
   } catch (err) {
-    await db
-      .update(webhookEvents)
-      .set({ status: "failed", errorMessage: err instanceof Error ? err.message : "unknown" })
-      .where(eq(webhookEvents.id, ledgerId));
+    await failWebhookEvent(ledgerId, err);
     return Response.json({ error: "Handler failed" }, { status: 500 });
   }
 }

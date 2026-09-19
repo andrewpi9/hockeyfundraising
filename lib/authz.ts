@@ -81,10 +81,10 @@ export async function optionalUser(): Promise<User | null> {
 
   const cu = await currentUser();
   if (!cu) return null;
-  const primary =
-    cu.emailAddresses.find((e) => e.id === cu.primaryEmailAddressId)?.emailAddress ??
-    cu.emailAddresses[0]?.emailAddress;
-  if (!primary) throw new AuthError("UNAUTHENTICATED", "Clerk user has no email address");
+  // Only a verified address may become identity; an unverified one could be anyone's.
+  const verified = cu.emailAddresses.filter((e) => e.verification?.status === "verified");
+  const primary = verified.find((e) => e.id === cu.primaryEmailAddressId)?.emailAddress ?? verified[0]?.emailAddress;
+  if (!primary) throw new AuthError("UNAUTHENTICATED", "Clerk user has no verified email address");
 
   const user = await upsertUserFromClerk({
     clerkUserId,
@@ -204,30 +204,6 @@ export async function requireParticipantOwner(
     .limit(1);
   if (!participant) throw new AuthError("FORBIDDEN");
   return { user, participant };
-}
-
-/** Coach-or-owner: a campaign admin may act on any participant in their campaign. */
-export async function requireParticipantOwnerOrAdmin(
-  participantId: string,
-): Promise<{ user: User; participant: Participant; asAdmin: boolean }> {
-  const user = await requireUser();
-  const [participant] = await db
-    .select()
-    .from(participants)
-    .where(eq(participants.id, participantId))
-    .limit(1);
-  if (!participant) throw new AuthError("FORBIDDEN");
-  if (participant.userId === user.id) return { user, participant, asAdmin: false };
-
-  const [campaign] = await db
-    .select({ orgId: campaigns.orgId })
-    .from(campaigns)
-    .where(eq(campaigns.id, participant.campaignId))
-    .limit(1);
-  if (!campaign) throw new AuthError("FORBIDDEN");
-  const membership = await membershipFor(user.id, campaign.orgId);
-  if (!membership || !ADMIN_ROLES.includes(membership.role)) throw new AuthError("FORBIDDEN");
-  return { user, participant, asAdmin: true };
 }
 
 /** Maps an AuthError to a Response for route handlers; rethrows anything else. */

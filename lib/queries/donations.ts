@@ -126,7 +126,9 @@ export async function listDonorsForParticipant(participantId: string, now: Date 
       createdAt: donations.createdAt,
     })
     .from(donations)
-    .where(and(eq(donations.participantId, participantId), sql`${donations.status} in ('succeeded', 'pending')`))
+    // Pending shows only for bank debits, which genuinely take days to settle.
+    // A pending card checkout is one the donor abandoned; their name stays private.
+    .where(and(eq(donations.participantId, participantId), sql`(${donations.status} = 'succeeded' or (${donations.status} = 'pending' and ${donations.paymentMethodType} = 'us_bank_account'))`))
     .orderBy(desc(donations.createdAt))
     .limit(200);
 
