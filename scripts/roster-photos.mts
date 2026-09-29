@@ -4,8 +4,10 @@
  *
  *   npm run roster:sync -- --campaign 2026-2027-season-fund [--json data/file.json]
  *
- * Photos are saved under public/roster/<participant-slug>.<ext> and served
- * from this site (CSP img-src 'self'), so nothing hotlinks the team site.
+ * By default photos are saved under public/roster/<participant-slug>.<ext>,
+ * which is gitignored — images of real people never enter version control.
+ * Pass --blob to upload them to the project's blob store instead, which is
+ * what a deployed site should use (the CSP allows that host).
  * A photo a participant uploaded themselves (a Vercel Blob URL) is never
  * overwritten. With --json, the import file is patched so a later
  * `db:import --replace` keeps everything.
@@ -19,7 +21,9 @@ const ROSTER_URL = process.env.ROSTER_URL ?? "https://unchockey.com/roster/";
 const arg = (flag: string) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] : undefined; };
 const campaignSlug = arg("--campaign");
 const jsonPath = arg("--json");
-if (!campaignSlug) { console.error("Usage: npm run roster:sync -- --campaign <slug> [--json data/file.json]"); process.exit(1); }
+const toBlob = process.argv.includes("--blob");
+if (!campaignSlug) { console.error("Usage: npm run roster:sync -- --campaign <slug> [--json data/file.json] [--blob]"); process.exit(1); }
+if (toBlob && !process.env.BLOB_READ_WRITE_TOKEN) { console.error("--blob needs BLOB_READ_WRITE_TOKEN"); process.exit(1); }
 
 const { db } = await import("../lib/db");
 const { campaigns, participants } = await import("../lib/db/schema");
@@ -58,8 +62,17 @@ for (const p of roster) {
       const type = sniffImageType(bytes);
       if (type) {
         const file = `${p.slug}.${extensionFor[type]}`;
-        writeFileSync(join(process.cwd(), "public", "roster", file), bytes);
-        photoUrl = `/roster/${file}`;
+        if (toBlob) {
+          const { put } = await import("@vercel/blob");
+          const blob = await put(`roster/${file}`, Buffer.from(bytes), {
+            access: "public", contentType: type, addRandomSuffix: false,
+            allowOverwrite: true, cacheControlMaxAge: 60 * 60 * 24 * 365,
+          });
+          photoUrl = blob.url;
+        } else {
+          writeFileSync(join(process.cwd(), "public", "roster", file), bytes);
+          photoUrl = `/roster/${file}`;
+        }
         photos += 1;
       }
     }

@@ -166,7 +166,7 @@ arrives, which is what promotes it and sends the receipt.
 | `npm run db:seed` | create the organization row |
 | `npm run db:generate` / `db:migrate` / `db:push` | migrations |
 | `npm run db:import -- data/<file>.json [--replace]` | load a previous campaign's roster and donations |
-| `npm run roster:sync -- --campaign <slug> [--json data/<file>.json]` | pull headshots, numbers, positions and years from a public roster page |
+| `npm run roster:sync -- --campaign <slug> [--json data/<file>.json] [--blob]` | pull headshots, numbers, positions and years from a public roster page |
 | `npm run keys:generate` | fresh PII encryption and index keys |
 | `npm run verify` | full test suite against in-process Postgres |
 | `npm run typecheck` / `lint` | |
@@ -406,12 +406,19 @@ used on receipts; branding is separate and cosmetic.
 
 `npm run roster:sync` reads a public roster page (`ROSTER_URL`), matches players
 to participants by name — exact, or same surname with a first-name prefix such
-as Matt/Matthew — and stores headshots under `public/roster/<slug>.jpg`, served
-first-party so nothing hotlinks the source and the CSP stays `img-src 'self'`.
-A photo a participant uploaded themselves is never overwritten. The parser is
-pure and unit-tested (`lib/roster-scrape.ts`).
+as Sam/Samuel — and records a headshot for each. A photo a participant uploaded
+themselves is never overwritten. The parser is pure and unit-tested
+(`lib/roster-scrape.ts`).
 
-Photos and logos belong to the organization; confirm permission before publishing.
+Photographs of real people are **not** kept in version control. By default the
+script writes to `public/roster/`, which is gitignored for local use; pass
+`--blob` to upload to the project's blob store instead, which is what a
+deployed site should use. A deployment whose database credentials are
+host-held secrets can apply an existing set of blob URLs through the bootstrap
+endpoint's `photos` operation.
+
+Photographs and logos belong to the organization. Confirm permission before
+publishing a site, and before making a repository that references them public.
 
 ---
 
