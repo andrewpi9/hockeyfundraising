@@ -59,8 +59,8 @@ export default async function HomePage() {
               <p className="font-display text-sm font-semibold uppercase tracking-[0.3em] text-carolina-300">{brand.tagline}</p>
               <h1 className="mt-2 font-display text-5xl font-bold uppercase leading-[0.95] sm:text-7xl">Fund the season</h1>
               <p className="mx-auto mt-4 max-w-xl text-carolina-100 sm:mx-0">
-                Ice time, travel and gear for {brand.name}. Every campaign here runs with a 0% platform fee — what you give goes to the program, minus only the card
-                processor&rsquo;s cost, which you can choose to cover.
+                UNC doesn&rsquo;t fund club hockey. The players do — dues are $2,500 a season, before gas to practice and before sticks. Every dollar you give goes
+                to the program.
               </p>
             </div>
           </div>

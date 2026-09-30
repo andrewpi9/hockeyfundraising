@@ -10,8 +10,25 @@ donors are offered the option to cover it so the full amount reaches the program
 
 ---
 
+## Why this exists
+
+The team used a commercial fundraising platform. It spammed our relatives with
+emails and texts, and it took 10–20% of every donation.
+
+What decided it was our captain. His family had given more than anyone the
+season before, and he felt bad that his grandmother was being taken advantage
+of by a company skimming a percentage of money meant for the team. Every
+donation we got felt bad instead of good.
+
+That is the reason the platform fee here is 0%, and the reason outreach is
+something a player sends from their own phone rather than something a service
+blasts at a contact list.
+
+---
+
 ## Contents
 
+- [Why this exists](#why-this-exists)
 - [How money moves](#how-money-moves)
 - [Running before payments are connected](#running-before-payments-are-connected)
 - [Before the first real donation](#before-the-first-real-donation)
@@ -424,21 +441,24 @@ publishing a site, and before making a repository that references them public.
 
 ## Running a campaign
 
+The hardest part of a campaign is not the software — it is getting people to
+donate at all. Everything here is built around one assumption: the people most
+likely to give are the ones who already know the participant.
+
 The administrator roster is the thing to watch. **Contacts loaded but zero
-messages sent** is the number to chase — that participant is one reminder away
-from their entire total. The dashboard offers a one-click nudge to everyone who
-has not yet shared.
+messages sent** is the number to chase, and the dashboard offers a one-click
+nudge to everyone who has not yet shared.
 
-Two things move the number more than anything technical:
+Two things help more than anything technical:
 
-- **Specific, itemized goals.** "Ice time is $340 an hour and the season needs
-  60 hours" outperforms "support our program."
-- **Participants' own stories, in their own words.** A generic team page raises a
-  fraction of what personal pages do.
+- **Say what the money actually pays for**, with real figures. Dues, ice time,
+  referees, buses. Vague appeals raise less than specific ones.
+- **Let participants write their own page.** A roster of identical pages reads
+  like a mailing list; a page in someone's own words does not.
 
-The highest-leverage feature is family helpers: a parent's network is larger
-than a student's, and a forwarded note from a relative converts better than any
-message from the platform.
+Family helpers exist for the same reason: a parent's address book is larger
+than a student's, and a note forwarded by a relative lands better than anything
+sent by a platform.
 
 ---
 

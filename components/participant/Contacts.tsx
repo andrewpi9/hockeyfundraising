@@ -37,7 +37,6 @@ export async function Contacts({ participantId, campaignActive }: { participantI
           <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-carolina-100 dark:bg-navy-800">
             <div className="animate-fill h-full rounded-full bg-gradient-to-r from-carolina-600 to-carolina-300" style={{ width: `${Math.max(pct, reached > 0 ? 2 : 0)}%` }} />
           </div>
-          {reached < contacts.length ? <p className="mt-1.5 text-xs text-muted">Players who reach 20+ people raise about three times as much as those who reach five.</p> : null}
         </div>
       ) : null}
 

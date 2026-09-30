@@ -22,6 +22,11 @@ const Body = z.discriminatedUnion("op", [
   z.object({ op: z.literal("seed"), name: z.string().trim().min(2).max(120).optional() }),
   z.object({ op: z.literal("import"), replace: z.boolean().default(false), payload: z.unknown() }),
   z.object({
+    op: z.literal("campaign"),
+    slug: z.string().trim().min(1).max(80),
+    description: z.string().trim().max(5000),
+  }),
+  z.object({
     op: z.literal("photos"),
     campaignSlug: z.string().trim().min(1).max(80),
     /** participant slug → image URL. Only the project's own blob host is accepted. */
@@ -61,6 +66,17 @@ export async function POST(req: Request) {
 
   const [org] = await db.select().from(organizations).limit(1);
   if (!org) return NextResponse.json({ error: "Seed the organization first." }, { status: 409 });
+
+  if (body.op === "campaign") {
+    const rows = await db
+      .update(campaigns)
+      .set({ description: body.description, updatedAt: new Date() })
+      .where(and(eq(campaigns.orgId, org.id), eq(campaigns.slug, body.slug)))
+      .returning({ id: campaigns.id });
+    if (!rows.length) return NextResponse.json({ error: "Campaign not found." }, { status: 404 });
+    await audit({ action: "campaign.update", targetType: "campaign", targetId: rows[0]!.id, orgId: org.id, metadata: { fields: "description", field_count: 1, via: "setup" } });
+    return NextResponse.json({ ok: true, chars: body.description.length });
+  }
 
   if (body.op === "photos") {
     const [campaign] = await db

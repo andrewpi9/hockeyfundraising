@@ -30,10 +30,10 @@ export function ShareCard({ url, code }: { url: string; code: string }) {
           <Button type="button" variant="outline" onClick={copy} className="shrink-0">{copied ? "Copied" : "Copy"}</Button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2 text-sm">
-          <a href={`sms:?&body=${encodeURIComponent(`I'm fundraising for my team this season — anything helps and it's tax-deductible: ${url}`)}`} className="rounded-xl border border-border px-3 py-1.5 hover:bg-carolina-50 dark:hover:bg-navy-800">
+          <a href={`sms:?&body=${encodeURIComponent(`If you can, please help support my hockey team this season. Anything helps. ${url}`)}`} className="rounded-xl border border-border px-3 py-1.5 hover:bg-carolina-50 dark:hover:bg-navy-800">
             Text it
           </a>
-          <a href={`mailto:?subject=${encodeURIComponent("Helping fund my team this season")}&body=${encodeURIComponent(`Hi,\n\nI'm raising money for my team this season. If you're able to chip in, anything helps and it's tax-deductible:\n${url}\n\nThank you!`)}`} className="rounded-xl border border-border px-3 py-1.5 hover:bg-carolina-50 dark:hover:bg-navy-800">
+          <a href={`mailto:?subject=${encodeURIComponent("Supporting my hockey team this season")}&body=${encodeURIComponent(`Hi,\n\nMy team pays for its own season — ice, refs, travel, jerseys. If you can, please help support us. Anything helps.\n${url}\n\nThank you!`)}`} className="rounded-xl border border-border px-3 py-1.5 hover:bg-carolina-50 dark:hover:bg-navy-800">
             Email it
           </a>
         </div>

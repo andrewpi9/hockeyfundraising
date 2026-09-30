@@ -110,9 +110,9 @@ export async function sendOutreachInvite(args: {
 
   const text = `Hi,
 
-${first} is raising money for ${args.campaignName} with ${args.orgName} and added you to their list.
+${first} plays for ${args.orgName}, and the team pays for its own season — ice time, refs, travel, jerseys. If you can, please help support them.
 ${note ? `\n"${note}"\n` : ""}
-If you're able to chip in, anything helps — 100% goes to the program, there's no platform fee, and it's tax-deductible to the extent the law allows:
+Anything helps. Every dollar goes to the program, and it's tax-deductible to the extent the law allows:
 ${args.url}
 
 Thank you,
@@ -124,7 +124,7 @@ You're receiving this because ${first} added you to their contacts. Unsubscribe:
 
   return send({
     to: args.to,
-    subject: `${first} is fundraising for ${args.campaignName}`,
+    subject: `${first} is playing for ${args.orgName} this season`,
     text,
     headers: {
       "List-Unsubscribe": `<${args.oneClickUrl}>`,
@@ -203,7 +203,7 @@ export async function sendParticipantNudge(args: { to: string; firstName: string
     subject: `${args.campaignName}: your page is ready — share it`,
     text: `Hi ${args.firstName},
 
-You're on the roster for ${args.campaignName} but haven't shared your page yet. Players who send 20+ messages raise about three times as much as those who send five.
+You're on the roster for ${args.campaignName} but haven't shared your page yet. The people most likely to give are the ones who already know you.
 
 Your page and share tools: ${args.consoleUrl}
 
@@ -212,7 +212,7 @@ Text five people today. That's it.
 — ${from}`,
     html: shell(
       `<h1 style="margin:0 0 16px;font-size:20px">Your page is ready, ${esc(args.firstName)}</h1>
-       <p style="margin:0 0 16px;line-height:1.6">You're on the roster for <strong>${esc(args.campaignName)}</strong> but haven't shared your page yet. Players who send 20+ messages raise about three times as much as those who send five.</p>
+       <p style="margin:0 0 16px;line-height:1.6">You're on the roster for <strong>${esc(args.campaignName)}</strong> but haven't shared your page yet. The people most likely to give are the ones who already know you.</p>
        ${button(args.consoleUrl, "Open my page")}
        <p style="margin:24px 0 0;line-height:1.6">Text five people today. That's it.</p>
        <p style="margin:16px 0 0;color:#78716c">— ${esc(from)}</p>`,
