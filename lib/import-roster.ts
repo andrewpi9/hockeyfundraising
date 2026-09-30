@@ -29,6 +29,7 @@ export const RosterImport = z.object({
     name: z.string().trim().min(2).max(120),
     goalCents: z.number().int().min(0).default(0),
     startedDaysAgo: z.number().int().min(0).max(3650).default(10),
+    description: z.string().trim().max(5000).optional(),
   }),
   participants: z
     .array(
@@ -152,6 +153,7 @@ export async function importRoster(
       orgId: opts.orgId,
       slug,
       name: payload.campaign.name,
+      description: payload.campaign.description ?? null,
       goalCents: payload.campaign.goalCents,
       startsAt: new Date(now.getTime() - payload.campaign.startedDaysAgo * DAY),
       status: "active",

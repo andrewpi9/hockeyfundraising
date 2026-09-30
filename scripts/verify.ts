@@ -606,7 +606,7 @@ async function main() {
   const pq2 = await import("../lib/queries/participants");
 
   const fixture = {
-    campaign: { slug: "legacy-import", name: "Legacy Import", goalCents: 100000, startedDaysAgo: 10 },
+    campaign: { slug: "legacy-import", name: "Legacy Import", goalCents: 100000, startedDaysAgo: 10, description: "Why this season costs what it does." },
     participants: [
       { name: "Import One", emailsSent: 3, textsSent: 2, expectedDonations: 2, expectedRaised: 150, rosterNumber: "91", teamRole: "Forward", classYear: "Junior", photoUrl: "/roster/import-one.jpg" },
       { name: "Import Two", emailsSent: 0, textsSent: 0, expectedDonations: 1, expectedRaised: 25 },
@@ -629,6 +629,7 @@ async function main() {
   check("summary counts", [sum1.participants, sum1.donations, sum1.totalCents, sum1.outreachEvents, sum1.replaced], [3, 3, 17500, 6, false]);
   const [legacy] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.slug, "legacy-import"));
   check("campaign created active", legacy?.status, "active");
+  check("import carries the campaign description", legacy?.description, "Why this season costs what it does.");
   check("campaign start backdated", legacy!.startsAt < new Date(Date.now() - 9 * 86_400_000), true);
 
   const roster = await pq2.listRoster(legacy!.id);
